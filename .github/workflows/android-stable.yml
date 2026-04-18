@@ -1,0 +1,103 @@
+name: Android Stable
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release-android-stable:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install Flutter stable
+        run: |
+          git clone https://github.com/flutter/flutter.git --depth 1 -b stable "$HOME/flutter"
+          echo "$HOME/flutter/bin" >> "$GITHUB_PATH"
+          "$HOME/flutter/bin/flutter" --version
+
+      - name: Resolve dependencies
+        run: flutter pub get
+
+      - name: Static analysis
+        run: flutter analyze
+
+      - name: Build Android release APK
+        run: flutter build apk --release
+
+      - name: Prepare release metadata
+        id: meta
+        run: |
+          VERSION="$(sed -n 's/^version: //p' pubspec.yaml | head -n 1)"
+          TAG_NAME="${GITHUB_REF_NAME}"
+          PREVIOUS_TAG="$(git tag --list 'v*' --sort=-creatordate | grep -Fxv "${TAG_NAME}" | head -n 1 || true)"
+          APK_NAME="trail_app-${TAG_NAME}.apk"
+          APK_SRC="build/app/outputs/flutter-apk/app-release.apk"
+          APK_DST="build/app/outputs/flutter-apk/${APK_NAME}"
+          mv "${APK_SRC}" "${APK_DST}"
+          {
+            echo "version=${VERSION}"
+            echo "tag_name=${TAG_NAME}"
+            echo "previous_tag=${PREVIOUS_TAG}"
+            echo "apk_path=${APK_DST}"
+            echo "apk_name=${APK_NAME}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.meta.outputs.apk_name }}
+          path: ${{ steps.meta.outputs.apk_path }}
+
+      - name: Create release notes
+        run: |
+          PREVIOUS_TAG="${{ steps.meta.outputs.previous_tag }}"
+          if [[ -n "${PREVIOUS_TAG}" ]]; then
+            RANGE="${PREVIOUS_TAG}..${GITHUB_SHA}"
+            CHANGE_HEADER="Changes since \`${PREVIOUS_TAG}\`"
+            CHANGES="$(git log --format='- %h %s' "${RANGE}")"
+          else
+            CHANGE_HEADER="Baseline commits included in this stable"
+            CHANGES="$(git log --format='- %h %s' -n 20 "${GITHUB_SHA}")"
+          fi
+
+          if [[ -z "${CHANGES}" ]]; then
+            CHANGES="- No commit summary available."
+          fi
+
+          cat > release_notes.md <<EOF
+          Android Stable release for 迹点
+
+          - Tag: \`${{ steps.meta.outputs.tag_name }}\`
+          - App version: \`${{ steps.meta.outputs.version }}\`
+          - Commit: \`${GITHUB_SHA}\`
+          - Build type: \`flutter build apk --release\`
+          - Signing: debug keystore (GitHub distribution only, not Play Store production signing)
+
+          ${CHANGE_HEADER}
+
+          ${CHANGES}
+          EOF
+
+      - name: Publish GitHub release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ steps.meta.outputs.tag_name }}" \
+            "${{ steps.meta.outputs.apk_path }}" \
+            --title "Trail Android Stable ${{ steps.meta.outputs.tag_name }}" \
+            --notes-file release_notes.md
