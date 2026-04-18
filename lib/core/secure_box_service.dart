@@ -170,6 +170,7 @@ class SecureBoxService {
               'pairedAt': f.pairedAt.toUtc().millisecondsSinceEpoch,
               'rssi': f.rssi,
               'stateIndex': f.state.index,
+              'checkInDates': f.checkInDates,
             },
           )
           .toList(),
@@ -306,6 +307,9 @@ class SecureBoxService {
           ).toLocal(),
           rssi: m['rssi'] == null ? null : (m['rssi'] as num).toInt(),
           state: _decodeFriendState(m['stateIndex']),
+          checkInDates: (m['checkInDates'] as List?)
+              ?.whereType<String>()
+              .toList(),
         ),
       );
     }

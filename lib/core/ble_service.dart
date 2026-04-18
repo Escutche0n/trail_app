@@ -95,7 +95,8 @@ class BleService {
   final Map<String, DiscoveredPeer> _seen = {};
 
   /// 超过 [_peerTtl] 没再被扫到就清理掉 — 避免 UI 上显示已离开的设备
-  static const Duration _peerTtl = Duration(seconds: 12);
+  /// 20s 窗口同时覆盖"朋友打卡 15s 在场门槛"的判定，保留若干 buffer。
+  static const Duration _peerTtl = Duration(seconds: 20);
   Timer? _ageOutTimer;
 
   Timer? _discoverableTimer;
@@ -116,6 +117,17 @@ class BleService {
 
   /// 获取某个已知 peer 最近一次携带的 presenceByte（未见过 → null）
   int? presenceByteFor(String peerUid) => _seen[peerUid]?.presenceByte;
+
+  /// 判定某 peer 是否在近场（默认 15s 内被扫到过）。
+  /// 供朋友节点打卡门禁使用：只有 peer 在范围内，今日节点才可 tap。
+  bool isPeerInRange(
+    String peerUid, {
+    Duration window = const Duration(seconds: 15),
+  }) {
+    final peer = _seen[peerUid];
+    if (peer == null) return false;
+    return DateTime.now().difference(peer.discoveredAt) <= window;
+  }
 
   /// 轮转本机 presence nonce 并立即 refresh 广播。
   /// UI / 合打卡逻辑在感知到对方在附近时调用；每次调用改一次 payload。

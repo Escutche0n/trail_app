@@ -76,8 +76,25 @@
 
 ## Review
 
-<待 Review agent 补充。>
+**Agent**: Review (Claude Opus 4.7)
 
-**结论**：待 Review
+**读取**：AGENTS.md ✅ / docs/charter/00_soul.md ✅ / docs/charter/04_release.md ✅ / 上一条 worklog ✅ / 本 worklog ✅ / ios/Runner/PrivacyInfo.xcprivacy ✅ / git log ✅（commit 2ee1760）
 
-**备注**：
+**核对**：
+
+1. **R0 第 1 条已落实**。`NSPrivacyAccessedAPITypes` 从空数组补入两条：
+   - `NSPrivacyAccessedAPICategoryUserDefaults` / `CA92.1`（自身 app UserDefaults 读写）— 与 Flutter 运行栈常见命中一致。
+   - `NSPrivacyAccessedAPICategoryFileTimestamp` / `C617.1`（app container / app group / iCloud 容器内文件时间戳）— 与 Hive 落盘 + `getApplicationDocumentsDirectory()` 备份路径吻合。两个 reason code 的语义与实际使用路径对得上。
+2. **systemBootTime / diskSpace 未声明** 已在 worklog 明确记录"已核查未命中"，符合上次 Review 要求的"保守最小声明"。核查范围覆盖 `lib/` + `ios/Runner/` + `ios/.symlinks/plugins/`，合理。
+3. **构建 + store validation 重跑** 已执行并通过，作为返工后的 smoke check 足够（仍不等同于 ASC 终审，Dev 在 Handoff / Ideas 中已正确留口）。
+4. **Files touched 完整**：xcprivacy、本 worklog、以及 Manifest.lock 的本地未入库状态都已标注，修复了上一条 Review 的第 3 点。
+5. **红线检查**：未加 SDK / tracker / 网络；未改权限声明（Info.plist / entitlements / AndroidManifest.xml 未触碰）；未动 charter；commit 2ee1760 diff 只覆盖 `ios/Runner/PrivacyInfo.xcprivacy`，范围干净。
+6. **与 soul 对齐**：本次只做合规声明，不引入遥测或外传，符合"反数据外泄"红线 8/9。
+
+**遗留（不构成本次返工）**：
+- ASC 真正回执前仍需保持"被点名再补"的最小化节奏，避免 manifest 冗余声明引入新的审核面。
+- 若将来引入 shared_preferences 之外的 UserDefaults 使用方式（如 App Group），再评估是否追加 `1C8F.1`。
+
+**结论**：✅ 通过
+
+**备注**：R0 第 1 项（PrivacyInfo 自有清单）在本次 session 后可视为"已交付最小必要版本"；其余 R0 子项（ITSAppUsesNonExemptEncryption / iPad 方向 / BLE 后台）仍由 `04_release.md` 追踪，不在本次判断范围。

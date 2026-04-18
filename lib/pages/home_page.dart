@@ -11,6 +11,7 @@ import '../models/friend.dart';
 import '../services/storage_service.dart';
 import '../services/haptic_service.dart';
 import '../widgets/alto_background.dart';
+import '../widgets/constellation_background.dart';
 import 'friend_discovery_page.dart';
 import 'settings_page.dart';
 
@@ -82,6 +83,17 @@ class _HomePageState extends State<HomePage>
   late AnimationController _glow; // 今日节点呼吸
   late AnimationController _bounce; // 点击微光回弹
   String? _bounceKey; // "aliveLineId" 或 customLine.id
+
+  /// BLE-验证成功的闪烁（仅朋友行今日节点）
+  ///
+  /// 用途：点击今日朋友节点且 BLE 确认对方在范围内时，在该节点上跑一次一次性
+  /// 亮度脉冲，给 Elvis 观察"BLE 真的握上了"的可视信号。不论是 cache 命中还是
+  /// probe 成功都触发——两者都是有效 BLE 证据。
+  ///
+  /// 与 soul #11 的关系：一次性 transient 动画（350ms 后自止），不是常驻呼吸，
+  /// 不在禁止列表内。
+  late AnimationController _bleFlash;
+  String? _bleFlashKey;
   late AnimationController _shake; // 长按抖动
   late AnimationController _arrowPulse; // 引导箭头脉动
   late AnimationController _lineAddAnim; // 新增行动线淡入
@@ -123,7 +135,12 @@ class _HomePageState extends State<HomePage>
   bool _satelliteRotationEnabled = true;
   int _pendingFriendCount = 0;
   int _confirmedFriendCount = 0;
-  TrailLine? _friendTimelineLine;
+  // 每位 confirmed 朋友一条时间线；按 pairedAt 升序排列
+  List<TrailLine> _friendLines = const <TrailLine>[];
+  // 与 _friendLines 一一对应；id 为 `__friend__<uid>`
+  Map<String, Friend> _friendsById = const <String, Friend>{};
+  // 朋友时间线 id 集合（painter / hit test 快速判定）
+  Set<String> _friendLineIds = const <String>{};
 
   // ── 全局径向菜单（长按触发） ─────────────────
   bool _radialMenuOpen = false;
@@ -190,6 +207,11 @@ class _HomePageState extends State<HomePage>
 
     _bounce = AnimationController(
       duration: const Duration(milliseconds: 420),
+      vsync: this,
+    );
+
+    _bleFlash = AnimationController(
+      duration: const Duration(milliseconds: 350),
       vsync: this,
     );
 
@@ -268,6 +290,9 @@ class _HomePageState extends State<HomePage>
       ..stop()
       ..dispose();
     _bounce
+      ..stop()
+      ..dispose();
+    _bleFlash
       ..stop()
       ..dispose();
     _shake
@@ -398,28 +423,62 @@ class _HomePageState extends State<HomePage>
     return diff.clamp(0, _todayIndex + _futureDays);
   }
 
-  TrailLine? _buildFriendTimelineLine(List<Friend> friends) {
+  static String _friendLineId(String uid) => '__friend__$uid';
+
+  /// 按"每位 confirmed 朋友一条时间线"构建：
+  /// - id = `__friend__<uid>`
+  /// - name = displayName
+  /// - createdAt = pairedAt 的日期零点
+  /// - completedDates = {pairedAt 所在日} ∪ friend.checkInDates
+  List<TrailLine> _buildFriendLines(List<Friend> friends) {
     final confirmed =
         friends.where((f) => f.state == FriendState.confirmed).toList()
           ..sort((a, b) => a.pairedAt.compareTo(b.pairedAt));
-    if (confirmed.isEmpty) return null;
+    if (confirmed.isEmpty) return const <TrailLine>[];
 
-    final createdAt = DateUtils.dateOnly(confirmed.first.pairedAt);
-    final completedDates =
-        confirmed
-            .map((f) => _dateKey(DateUtils.dateOnly(f.pairedAt)))
-            .toSet()
-            .toList()
-          ..sort();
+    return confirmed.map((f) {
+      final created = DateUtils.dateOnly(f.pairedAt);
+      final dates = <String>{
+        _dateKey(created),
+        ...f.checkInDates,
+      }.toList()..sort();
+      return TrailLine.fromType(
+        id: _friendLineId(f.uid),
+        type: TrailLineType.custom,
+        name: f.displayName,
+        createdAt: created,
+        completedDates: dates,
+        notes: const {},
+      );
+    }).toList();
+  }
 
-    return TrailLine.fromType(
-      id: '__friend_timeline__',
-      type: TrailLineType.custom,
-      name: '好友',
-      createdAt: createdAt,
-      completedDates: completedDates,
-      notes: const {},
-    );
+  // ─────────────────────────────────────────────
+  // BLE 近距探测（方案 B · 点按触发的短窗口）
+  // ─────────────────────────────────────────────
+  //
+  // 为什么不让 home_page 常驻扫描：BLE spec 限定"仅前台发现"，常开会把电量代价
+  // 扩散到所有主屏使用路径。方案 B 把 BLE 生命周期收敛到"用户真的按了今日朋友
+  // 节点"那一下 —— 意图明确、电量友好。
+  //
+  // 探测窗口 4s：覆盖一次 Android lowLatency 扫描批次 + iOS 通告间隔。再长
+  // 用户会觉得无响应；再短容易错过对方的慢广播周期。
+  static const Duration _friendProbeWindow = Duration(seconds: 4);
+
+  Future<bool> _probeFriendInRange(String peerUid) async {
+    final ble = BleService.instance;
+    // 告诉用户"听到了，正在找对方"。不抢 checkInToggle 的成功 haptic。
+    HapticService.actionMenuSelect();
+    // 同时广播 + 扫描。对方也在前台（home_page 同路径）时才会互相看到。
+    unawaited(ble.setDiscoverable(duration: _friendProbeWindow));
+    unawaited(ble.startScan(timeout: _friendProbeWindow));
+    final deadline = DateTime.now().add(_friendProbeWindow);
+    while (DateTime.now().isBefore(deadline)) {
+      if (!mounted) return false;
+      if (ble.isPeerInRange(peerUid)) return true;
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+    }
+    return ble.isPeerInRange(peerUid);
   }
 
   // ─────────────────────────────────────────────
@@ -472,8 +531,7 @@ class _HomePageState extends State<HomePage>
     //   _vScrollMax = maxSnapRows * rowSpacing
     // 最终最后一行距屏幕顶部的 Y 会在 [desiredBottom, desiredBottom + rowSpacing)
     // 区间内动态浮动 —— 满足用户要求的「动态合适距离」。
-    final visibleRowCount =
-        _customLines.length + (_friendTimelineLine == null ? 0 : 1);
+    final visibleRowCount = _customLines.length + _friendLines.length;
     final lastCustomRaw = _aliveY(vh) + visibleRowCount * _rowSpacing;
     final desiredBottom = vh * 0.75;
     final rawMax = max(0.0, lastCustomRaw - desiredBottom);
@@ -789,6 +847,12 @@ class _HomePageState extends State<HomePage>
       _openRadialMenu(pos);
       return;
     }
+    if (_friendLineIds.contains(hit.lineId)) {
+      // 好友行长按：径向菜单（改名 / Unfriend）留到下一个大版本。
+      // 当前走 friend_discovery_page 的既有长按入口，这里不落 custom line action menu，
+      // 避免"看得到但不能用"的错误入口。
+      return;
+    }
     if (!_isTodayColumn(hit.dayIndex)) return;
 
     if (_newFeaturesEnabled) {
@@ -837,6 +901,18 @@ class _HomePageState extends State<HomePage>
       if ((p.dy - y).abs() < _nodeHitRadius) {
         return _NodeHit(
           lineId: _customLines[k].id,
+          dayIndex: dayIndex,
+          center: Offset(centerX, y),
+        );
+      }
+    }
+    for (int j = 0; j < _friendLines.length; j++) {
+      final line = _friendLines[j];
+      if (dayIndex < _lineStartDayIndex(line.createdAt)) continue;
+      final y = _customRowY(_customLines.length + j, vh);
+      if ((p.dy - y).abs() < _nodeHitRadius) {
+        return _NodeHit(
+          lineId: line.id,
           dayIndex: dayIndex,
           center: Offset(centerX, y),
         );
@@ -915,6 +991,38 @@ class _HomePageState extends State<HomePage>
         _aliveCheckIns = StorageService.instance.getCheckInDates();
         _computeGapData();
         _bounceKey = _aliveId;
+      } else if (_friendLineIds.contains(lineId)) {
+        final friend = _friendsById[lineId];
+        if (friend == null) return;
+        final todayKey = _dateKey(_today);
+        // 仅当对方 BLE 在范围内才允许对今日打卡（过去节点不可修改）。
+        // 若缓存未命中，启动一次短窗口主动探测（方案 B）；否则走快速路径。
+        bool inRange = BleService.instance.isPeerInRange(friend.uid);
+        debugPrint(
+          '[FRIEND_TAP] uid=${friend.uid} cacheHit=$inRange',
+        );
+        if (!inRange) {
+          inRange = await _probeFriendInRange(friend.uid);
+          debugPrint('[FRIEND_TAP] probe result inRange=$inRange');
+          if (!mounted) return;
+          if (!inRange) {
+            HapticFeedback.mediumImpact();
+            return;
+          }
+        }
+        if (friend.checkInDates.contains(todayKey)) {
+          friend.checkInDates.remove(todayKey);
+        } else {
+          friend.checkInDates.add(todayKey);
+        }
+        await friend.save();
+        if (!mounted) return;
+        _friendLines = _buildFriendLines(
+          await BleService.instance.listFriends(),
+        );
+        _bounceKey = lineId;
+        _bleFlashKey = lineId;
+        _bleFlash.forward(from: 0);
       } else {
         final line = _findCustomLine(lineId);
         if (line == null) {
@@ -1233,7 +1341,11 @@ class _HomePageState extends State<HomePage>
   Future<void> _loadFriendSummary() async {
     final friends = await BleService.instance.listFriends();
     if (!mounted) return;
-    final friendTimelineLine = _buildFriendTimelineLine(friends);
+    final friendLines = _buildFriendLines(friends);
+    final friendsById = <String, Friend>{
+      for (final f in friends)
+        if (f.state == FriendState.confirmed) _friendLineId(f.uid): f,
+    };
     setState(() {
       // "pending" 在主页小红点语义里涵盖我方正在等或对方正在等我 — 两者都算未完成互确认
       _pendingFriendCount = friends
@@ -1246,7 +1358,9 @@ class _HomePageState extends State<HomePage>
       _confirmedFriendCount = friends
           .where((f) => f.state == FriendState.confirmed)
           .length;
-      _friendTimelineLine = friendTimelineLine;
+      _friendLines = friendLines;
+      _friendsById = friendsById;
+      _friendLineIds = friendsById.keys.toSet();
     });
     if (_viewport != Size.zero) {
       _recomputeBounds(_viewport);
@@ -1559,12 +1673,24 @@ class _HomePageState extends State<HomePage>
               // AltoBackground 是 const，内部不使用任何 animation 值；
               // 旧版 AnimatedBuilder 包装会让它每帧都参与脏标记，纯浪费。
               const IgnorePointer(child: AltoBackground()),
+              // ── 星图背景装饰（仅过去节点）──
+              // bottomY = 暂居天数文本上沿（aliveY - 96）：留给 Header 三行文字呼吸
+              Positioned.fill(
+                child: ConstellationBackground(
+                  aliveCheckIns: _aliveCheckIns,
+                  customLines: _customLines,
+                  today: _today,
+                  topInset: mediaPad.top,
+                  bottomY: aliveYpx - 96.0,
+                ),
+              ),
               // ── 时间轴 ──
               _buildGestureLayer(
                 child: AnimatedBuilder(
                   animation: Listenable.merge([
                     _glow,
                     _bounce,
+                    _bleFlash,
                     _shake,
                     _arrowPulse,
                     _lineAddAnim,
@@ -1586,7 +1712,8 @@ class _HomePageState extends State<HomePage>
                         todayIndex: _todayIndex,
                         aliveCheckIns: _aliveCheckIns,
                         customLines: _customLines,
-                        friendLine: _friendTimelineLine,
+                        friendLines: _friendLines,
+                        friendLineIds: _friendLineIds,
                         survivalDays: _survivalDays,
                         dayWidth: _dayWidth,
                         hScroll: _hScroll,
@@ -1598,6 +1725,8 @@ class _HomePageState extends State<HomePage>
                         glowValue: _glow.value,
                         bounceValue: _bounce.value,
                         bounceKey: _bounceKey,
+                        bleFlashValue: _bleFlash.value,
+                        bleFlashKey: _bleFlashKey,
                         shakeValue: _shake.value,
                         arrowPulse: _arrowPulse.value,
                         lineAddValue: _lineAddAnim.value,
@@ -3143,7 +3272,8 @@ class _TimelinePainter extends CustomPainter {
   final int todayIndex;
   final Set<String> aliveCheckIns;
   final List<TrailLine> customLines;
-  final TrailLine? friendLine;
+  final List<TrailLine> friendLines;
+  final Set<String> friendLineIds;
   final int survivalDays;
   final double dayWidth;
   final double hScroll;
@@ -3155,6 +3285,8 @@ class _TimelinePainter extends CustomPainter {
   final double glowValue;
   final double bounceValue;
   final String? bounceKey;
+  final double bleFlashValue; // 0..1；BLE 验证成功的一次性亮度脉冲
+  final String? bleFlashKey;
   final double shakeValue;
   final double arrowPulse;
   final double lineAddValue;
@@ -3188,7 +3320,8 @@ class _TimelinePainter extends CustomPainter {
     required this.todayIndex,
     required this.aliveCheckIns,
     required this.customLines,
-    required this.friendLine,
+    required this.friendLines,
+    required this.friendLineIds,
     required this.survivalDays,
     required this.dayWidth,
     required this.hScroll,
@@ -3200,6 +3333,8 @@ class _TimelinePainter extends CustomPainter {
     required this.glowValue,
     required this.bounceValue,
     required this.bounceKey,
+    required this.bleFlashValue,
+    required this.bleFlashKey,
     required this.shakeValue,
     required this.arrowPulse,
     required this.lineAddValue,
@@ -3269,7 +3404,7 @@ class _TimelinePainter extends CustomPainter {
     // 今天：保留教学式出现动画
     // 非今天：只要下方已经有轴，直接完整连到底
     final hasAnyTrackedRow =
-        customLines.isNotEmpty || friendLine != null || hasFirstTrack;
+        customLines.isNotEmpty || friendLines.isNotEmpty || hasFirstTrack;
     if (newFeaturesEnabled && hasAnyTrackedRow) {
       _paintCenterAxis(canvas);
     }
@@ -3361,15 +3496,16 @@ class _TimelinePainter extends CustomPainter {
       );
     }
 
-    if (friendLine != null) {
-      final line = friendLine!;
+    for (int j = 0; j < friendLines.length; j++) {
+      final line = friendLines[j];
       final lineFirstDay = max(firstDay, _lineStartIndex(line.createdAt));
       _paintRow(
         canvas: canvas,
-        y: _customY(customLines.length),
+        y: _customY(customLines.length + j),
         lineId: line.id,
         lineName: line.name,
         isAlive: false,
+        isFriendRow: true,
         checkedDates: line.completedDates.toSet(),
         notes: const {},
         firstDay: lineFirstDay,
@@ -3475,8 +3611,10 @@ class _TimelinePainter extends CustomPainter {
       }
     }
 
-    if (friendLine != null && friendLine!.completedDates.contains(key)) {
-      bottomY = _customY(customLines.length);
+    for (int j = 0; j < friendLines.length; j++) {
+      if (friendLines[j].completedDates.contains(key)) {
+        bottomY = _customY(customLines.length + j);
+      }
     }
 
     return bottomY;
@@ -3502,6 +3640,7 @@ class _TimelinePainter extends CustomPainter {
     int? revealToDay,
     bool showLabel = true,
     String? ghostLabel,
+    bool isFriendRow = false,
   }) {
     if (y < -40 || y > viewportHeight + 40) return;
 
@@ -3664,6 +3803,17 @@ class _TimelinePainter extends CustomPainter {
         }
       }
 
+      // BLE 验证成功的一次性亮度脉冲（仅朋友行今日节点）。
+      // 轨迹：alpha *= 1 + 0.7 * sin(π * t)，t∈(0,1)。t=0/1 时为 1x，t=0.5 时峰值 1.7x。
+      // 由 clamp(0, 1) 兜底，不会越界。350ms 后自止。
+      if (bleFlashKey == lineId &&
+          isTodayCol &&
+          bleFlashValue > 0 &&
+          bleFlashValue < 1) {
+        final pulse = sin(bleFlashValue * pi);
+        effAlpha = (effAlpha * (1.0 + 0.7 * pulse)).clamp(0.0, 1.0);
+      }
+
       final hasRevealFinishAccent =
           !isAlive &&
           revealToDay == todayIndex &&
@@ -3696,8 +3846,30 @@ class _TimelinePainter extends CustomPainter {
         }
       } else if (checked) {
         _drawSolidNode(canvas, x, y, effAlpha);
+      } else if (isFriendRow) {
+        _drawDashedHollowNode(canvas, x, y, effAlpha);
       } else {
         _drawHollowNode(canvas, x, y, effAlpha);
+      }
+
+      // BLE 验证成功的一次性扩散环（仅朋友行今日节点）。
+      // 语义：A 能画出这个环 = A 真的从 BLE 读到了 B。路径 A（tapper 侧视觉），
+      // 两台手机"同时亮"不在 scope 内。
+      // 轨迹：半径 4 → 36（easeOutCubic），alpha 0.55 → 0，350ms 内自止。
+      if (bleFlashKey == lineId &&
+          isTodayCol &&
+          isFriendRow &&
+          bleFlashValue > 0 &&
+          bleFlashValue < 1) {
+        final t = bleFlashValue;
+        final easeOut = 1.0 - (1.0 - t) * (1.0 - t) * (1.0 - t);
+        final r = 4.0 + easeOut * 32.0;
+        final ringAlpha = ((1.0 - t) * 0.55 * effAlpha).clamp(0.0, 1.0);
+        final ringPaint = Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.2
+          ..color = Color.fromRGBO(255, 255, 255, ringAlpha);
+        canvas.drawCircle(Offset(x, y), r, ringPaint);
       }
 
       // 卫星点 — 仅新功能 + 节点有备注
@@ -3889,6 +4061,37 @@ class _TimelinePainter extends CustomPainter {
       ..style = PaintingStyle.stroke
       ..strokeWidth = 0.8;
     canvas.drawCircle(Offset(x, y), 3.6 * scale, paint);
+  }
+
+  /// 朋友节点未打卡态：虚线空心圆，区别于普通 hollow。
+  /// 达到"需要对方在场才能落地"的视觉暗示。
+  void _drawDashedHollowNode(
+    Canvas canvas,
+    double x,
+    double y,
+    double alpha, {
+    double scale = 1.0,
+  }) {
+    final r = 3.6 * scale;
+    final paint = Paint()
+      ..color = Color.fromRGBO(255, 255, 255, 0.32 * alpha)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 0.8
+      ..strokeCap = StrokeCap.butt;
+    // 10 段圆周 → 5 段可见、5 段空（棋盘式虚线环）
+    const int segments = 10;
+    for (int i = 0; i < segments; i++) {
+      if (i.isOdd) continue;
+      final startAngle = (i / segments) * 2 * pi;
+      final sweep = (1 / segments) * 2 * pi;
+      canvas.drawArc(
+        Rect.fromCircle(center: Offset(x, y), radius: r),
+        startAngle,
+        sweep,
+        false,
+        paint,
+      );
+    }
   }
 
   // 卫星点 + 环
@@ -4217,7 +4420,8 @@ class _TimelinePainter extends CustomPainter {
         old.todayIndex != todayIndex ||
         !identical(old.aliveCheckIns, aliveCheckIns) ||
         !identical(old.customLines, customLines) ||
-        !identical(old.friendLine, friendLine) ||
+        !identical(old.friendLines, friendLines) ||
+        !identical(old.friendLineIds, friendLineIds) ||
         old.survivalDays != survivalDays ||
         old.dayWidth != dayWidth ||
         old.hScroll != hScroll ||
@@ -4228,6 +4432,8 @@ class _TimelinePainter extends CustomPainter {
         old.viewportHeight != viewportHeight ||
         old.glowValue != glowValue ||
         old.bounceValue != bounceValue ||
+        old.bleFlashValue != bleFlashValue ||
+        old.bleFlashKey != bleFlashKey ||
         old.bounceKey != bounceKey ||
         old.shakeValue != shakeValue ||
         old.arrowPulse != arrowPulse ||

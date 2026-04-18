@@ -57,13 +57,20 @@ class Friend extends HiveObject {
   ///   - confirmed: 双方已完成本次会面内的互相确认
   FriendState state;
 
+  /// 本机打卡日集合（dateKey `YYYY-MM-DD`）
+  ///
+  /// 仅当对方 BLE 在范围内时允许在今日节点上登记一次。
+  /// 过去的打卡不可撤销 —— 见 constellation.md "反游戏化" 决策。
+  List<String> checkInDates;
+
   Friend({
     required this.uid,
     required this.displayName,
     required this.pairedAt,
     this.rssi,
     this.state = FriendState.confirmed,
-  });
+    List<String>? checkInDates,
+  }) : checkInDates = checkInDates ?? <String>[];
 }
 
 /// 手写 TypeAdapter（不依赖 build_runner）
@@ -74,6 +81,7 @@ class Friend extends HiveObject {
 ///   field 2 : int     pairedAt.millisecondsSinceEpoch (UTC)
 ///   field 3 : int?    rssi
 ///   field 4 : int     state.index
+///   field 5 : List<String>  checkInDates   (v2 新增；旧数据缺字段 → 空列表)
 class FriendAdapter extends TypeAdapter<Friend> {
   @override
   final int typeId = 10;
@@ -93,6 +101,7 @@ class FriendAdapter extends TypeAdapter<Friend> {
       ).toLocal(),
       rssi: fields[3] as int?,
       state: _decodeState(fields[4]),
+      checkInDates: (fields[5] as List?)?.whereType<String>().toList(),
     );
   }
 
@@ -112,7 +121,7 @@ class FriendAdapter extends TypeAdapter<Friend> {
   @override
   void write(BinaryWriter writer, Friend obj) {
     writer
-      ..writeByte(5) // 5 个字段
+      ..writeByte(6) // 6 个字段
       ..writeByte(0)
       ..write(obj.uid)
       ..writeByte(1)
@@ -122,7 +131,9 @@ class FriendAdapter extends TypeAdapter<Friend> {
       ..writeByte(3)
       ..write(obj.rssi)
       ..writeByte(4)
-      ..write(obj.state.index);
+      ..write(obj.state.index)
+      ..writeByte(5)
+      ..write(obj.checkInDates);
   }
 
   @override
