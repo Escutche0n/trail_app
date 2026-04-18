@@ -5,6 +5,7 @@ import '../core/date_guard.dart';
 import '../core/secure_box_service.dart';
 import '../core/time_integrity_service.dart';
 import '../models/birthday.dart';
+import '../models/friend.dart';
 import '../models/trail_line.dart';
 
 /// 本地 Hive 盒子打开失败。
@@ -489,7 +490,7 @@ class StorageService {
       _birthdayBox,
       _customLinesBox,
       _dataBox,
-      if (Hive.isBoxOpen('friends')) Hive.box('friends'),
+      if (Hive.isBoxOpen('friends')) Hive.box<Friend>('friends'),
     ];
 
     for (final box in openBoxes) {
