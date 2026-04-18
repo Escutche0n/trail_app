@@ -68,10 +68,6 @@
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
 	</array>
-	<key>UISupportedInterfaceOrientations~ipad</key>
-	<array>
-		<string>UIInterfaceOrientationPortrait</string>
-	</array>
 	<!-- ── 文件访问（file_picker 导入/导出）────────── -->
 	<key>NSDocumentsFolderUsageDescription</key>
 	<string>迹点 需要访问文件来导入和导出备份数据。</string>
