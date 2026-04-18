@@ -422,7 +422,9 @@ class BleService {
       _scanning = true;
       return true;
     } catch (e) {
-      debugPrint('[BLE] filtered startScan failed, retrying without filter: $e');
+      debugPrint(
+        '[BLE] filtered startScan failed, retrying without filter: $e',
+      );
       // fallback：不带过滤的全量扫描（_onScanBatch 仍会按 serviceUuid 过滤）
       try {
         _scanSub = FlutterBluePlus.scanResults.listen(_onScanBatch);
@@ -461,10 +463,10 @@ class BleService {
     _ageOutTimer?.cancel();
     _ageOutTimer = Timer.periodic(const Duration(seconds: 4), (_) {
       final cutoff = DateTime.now().subtract(_peerTtl);
-      final stale =
-          _seen.entries.where((e) => e.value.discoveredAt.isBefore(cutoff))
-              .map((e) => e.key)
-              .toList();
+      final stale = _seen.entries
+          .where((e) => e.value.discoveredAt.isBefore(cutoff))
+          .map((e) => e.key)
+          .toList();
       if (stale.isEmpty) return;
       for (final uid in stale) {
         _seen.remove(uid);
@@ -589,7 +591,8 @@ class BleService {
     final friend = await findFriendByUid(remoteUid);
 
     // 目标前缀如果存在且不是我（也不是通配 0000...），直接忽略 —— 别人在对别人握手
-    final bool addressedToMe = targetUidPrefix == null ||
+    final bool addressedToMe =
+        targetUidPrefix == null ||
         targetUidPrefix == '00000000' ||
         targetUidPrefix.toLowerCase() == myUidPrefix;
     if (!addressedToMe) return;
@@ -762,6 +765,18 @@ class BleService {
     await stopAdvertising();
     await _peerCtrl.close();
     await _incomingCtrl.close();
+  }
+
+  /// 仅供调试 / 设置页清档使用：停止 BLE 活动并清空内存态。
+  Future<void> resetRuntimeState() async {
+    await stopScan();
+    await stopAdvertising();
+    _seen.clear();
+    _friendsBox = null;
+    _currentPresenceByte = 0;
+    _lastAutoBumpAt = null;
+    _currentHandshakeState = PeerHandshakeState.discoverable;
+    _currentTargetPrefix = null;
   }
 
   // ── UUID <-> 16 bytes ──────────────────────────────

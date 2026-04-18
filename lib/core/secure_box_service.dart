@@ -317,6 +317,10 @@ class SecureBoxService {
     _ready = false;
   }
 
+  Future<void> resetForWipe() async {
+    await debugReset();
+  }
+
   /// 导入流程里解回 FriendState — 与 [FriendAdapter._decodeState] 对齐。
   /// 越界/缺字段一律回落到 confirmed，避免跨版本备份导入时抛 RangeError。
   static FriendState _decodeFriendState(dynamic raw) {

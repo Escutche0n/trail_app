@@ -475,6 +475,41 @@ class StorageService {
   Future<void> setSatelliteRotationEnabled(bool v) =>
       _dataBox.put(_prefSatelliteRotationKey, v);
 
+  /// 危险操作：清除所有本地业务数据，并删除对应的 Hive 物理文件。
+  ///
+  /// 这会把 app 恢复到“首次启动”状态：
+  /// - birthday
+  /// - custom_lines
+  /// - trail_data
+  /// - friends
+  ///
+  /// 不负责清理 UID / 时间完整性签名状态；调用方需自行重置相应服务。
+  Future<void> resetAllData() async {
+    final openBoxes = <Box>[
+      _birthdayBox,
+      _customLinesBox,
+      _dataBox,
+      if (Hive.isBoxOpen('friends')) Hive.box('friends'),
+    ];
+
+    for (final box in openBoxes) {
+      if (box.isOpen) {
+        await box.close();
+      }
+    }
+
+    for (final name in const [
+      'birthday',
+      'custom_lines',
+      'trail_data',
+      'friends',
+    ]) {
+      await Hive.deleteBoxFromDisk(name);
+    }
+
+    _instance = null;
+  }
+
   // ── 工具方法 ──────────────────────────────────
 
   /// 关键写入路径统一入口 —— 系统时间被篡改时直接抛 [TimeTamperedException]。

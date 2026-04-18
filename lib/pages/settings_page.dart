@@ -3,12 +3,16 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:share_plus/share_plus.dart';
+import '../core/ble_service.dart';
+import '../core/core_bootstrap.dart';
 import '../core/secure_box_service.dart';
 import '../core/time_integrity_service.dart';
 import '../core/uid_service.dart';
 import '../services/storage_service.dart';
 import '../services/haptic_service.dart';
 import 'archive_page.dart';
+import 'birthday_setup_page.dart';
+import 'home_page.dart';
 
 /// 设置页 — 极简深色风格
 /// 提供:
@@ -30,6 +34,7 @@ class _SettingsPageState extends State<SettingsPage> {
   late bool _satelliteRotation;
   bool _backupBusy = false;
   bool _restoreBusy = false;
+  bool _resetBusy = false;
 
   @override
   void initState() {
@@ -85,6 +90,13 @@ class _SettingsPageState extends State<SettingsPage> {
                       icon: Icons.download_outlined,
                       busy: _restoreBusy,
                       onTap: _doRestore,
+                    ),
+                    const SizedBox(height: 4),
+                    _DangerTile(
+                      title: '清除所有数据',
+                      subtitle: '删除本机全部记录并回到首次启动状态',
+                      busy: _resetBusy,
+                      onTap: _doResetAllData,
                     ),
                     const SizedBox(height: 28),
 
@@ -298,6 +310,103 @@ class _SettingsPageState extends State<SettingsPage> {
     } finally {
       if (mounted) setState(() => _restoreBusy = false);
     }
+  }
+
+  Future<void> _doResetAllData() async {
+    if (_resetBusy) return;
+    HapticService.actionMenuSelect();
+
+    final confirmFirst = await _showResetDialog(
+      title: '清除所有数据',
+      body: '这会删除本机上的生日、时间线、朋友记录、设置与备份索引。此操作不可撤销。',
+      confirmText: '继续',
+    );
+    if (confirmFirst != true || !mounted) return;
+
+    final confirmSecond = await _showResetDialog(
+      title: '最后确认',
+      body: '清除后应用会回到首次启动状态。若你没有可用备份，这些数据将永久丢失。',
+      confirmText: '立即清除',
+      destructive: true,
+    );
+    if (confirmSecond != true || !mounted) return;
+
+    setState(() => _resetBusy = true);
+    try {
+      await BleService.instance.resetRuntimeState();
+      await StorageService.instance.resetAllData();
+      await SecureBoxService.instance.resetForWipe();
+      await TimeIntegrityService.instance.resetForWipe();
+      await UidService.instance.resetForWipe();
+      await CoreBootstrap.initialize();
+      await StorageService.init();
+
+      if (!mounted) return;
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(
+          builder: (pageContext) => BirthdaySetupPage(
+            onConfirmed: () {
+              Navigator.of(pageContext).pushAndRemoveUntil(
+                MaterialPageRoute(builder: (_) => const HomePage()),
+                (route) => false,
+              );
+            },
+          ),
+        ),
+        (route) => false,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _resetBusy = false);
+      _showToast('清除失败: $e');
+    }
+  }
+
+  Future<bool?> _showResetDialog({
+    required String title,
+    required String body,
+    required String confirmText,
+    bool destructive = false,
+  }) {
+    return showDialog<bool>(
+      context: context,
+      barrierDismissible: true,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: const Color(0xFF121212),
+        title: Text(
+          title,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 17,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        content: Text(
+          body,
+          style: const TextStyle(
+            color: Color(0xCCFFFFFF),
+            fontSize: 13,
+            fontWeight: FontWeight.w400,
+            height: 1.45,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('取消', style: TextStyle(color: Color(0x88FFFFFF))),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: Text(
+              confirmText,
+              style: TextStyle(
+                color: destructive ? const Color(0xFFFF6B6B) : Colors.white,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   void _showToast(String msg) {
@@ -517,6 +626,87 @@ class _ActionTile extends StatelessWidget {
                       subtitle,
                       style: const TextStyle(
                         color: Color(0x77FFFFFF),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w300,
+                        letterSpacing: 0.8,
+                        decoration: TextDecoration.none,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (busy)
+                const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 1.5,
+                    color: Color(0x88FFFFFF),
+                  ),
+                )
+              else
+                const Icon(
+                  Icons.chevron_right,
+                  color: Color(0x55FFFFFF),
+                  size: 20,
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DangerTile extends StatelessWidget {
+  final String title;
+  final String subtitle;
+  final bool busy;
+  final VoidCallback onTap;
+
+  const _DangerTile({
+    required this.title,
+    required this.subtitle,
+    required this.busy,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: busy ? null : onTap,
+      child: Opacity(
+        opacity: busy ? 0.5 : 1.0,
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 2),
+          child: Row(
+            children: [
+              const Icon(
+                Icons.delete_outline,
+                color: Color(0xCCFF6B6B),
+                size: 20,
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      '清除所有数据',
+                      style: TextStyle(
+                        color: Color(0xFFFF6B6B),
+                        fontSize: 15,
+                        fontWeight: FontWeight.w400,
+                        letterSpacing: 1,
+                        decoration: TextDecoration.none,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      subtitle,
+                      style: const TextStyle(
+                        color: Color(0x88FFFFFF),
                         fontSize: 12,
                         fontWeight: FontWeight.w300,
                         letterSpacing: 0.8,

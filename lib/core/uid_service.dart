@@ -190,4 +190,8 @@ class UidService {
     await _store.delete(key: _kUidKey);
     await _store.delete(key: _kHandleKey);
   }
+
+  Future<void> resetForWipe() async {
+    await debugReset();
+  }
 }

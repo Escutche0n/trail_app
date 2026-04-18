@@ -44,16 +44,16 @@ class SignedEnvelope {
   });
 
   Map<String, dynamic> toJson() => {
-        'ts': timestampMs,
-        'body': body,
-        'sig': signatureHex,
-      };
+    'ts': timestampMs,
+    'body': body,
+    'sig': signatureHex,
+  };
 
   factory SignedEnvelope.fromJson(Map<String, dynamic> j) => SignedEnvelope(
-        timestampMs: (j['ts'] as num).toInt(),
-        body: j['body'] as String,
-        signatureHex: j['sig'] as String,
-      );
+    timestampMs: (j['ts'] as num).toInt(),
+    body: j['body'] as String,
+    signatureHex: j['sig'] as String,
+  );
 
   String encodeJson() => jsonEncode(toJson());
 
@@ -132,7 +132,8 @@ class TimeIntegrityService {
   int _anchorMonoMs = 0;
 
   /// UI 可订阅：tampered 状态变化时通知
-  final StreamController<bool> _tamperedCtrl = StreamController<bool>.broadcast();
+  final StreamController<bool> _tamperedCtrl =
+      StreamController<bool>.broadcast();
   Stream<bool> get onTamperedChanged => _tamperedCtrl.stream;
 
   /// 最近一次启动时是否检测到系统时钟「显著回拨」
@@ -249,9 +250,7 @@ class TimeIntegrityService {
     // 当前时间不能比「进入后台时」还早（含容差）
     if (nowMs + _toleranceMs < bgMs) {
       _setTampered(true);
-      debugPrint(
-        '[TimeIntegrity] TAMPER on resume: now=$nowMs < bgTime=$bgMs',
-      );
+      debugPrint('[TimeIntegrity] TAMPER on resume: now=$nowMs < bgTime=$bgMs');
     }
 
     // 同时检查历史最大值
@@ -314,7 +313,10 @@ class TimeIntegrityService {
           : _lastSeenMs;
       // 取 max(safeMs, lastSeenMs) 确保不会后退
       final clampMs = safeMs > _lastSeenMs ? safeMs : _lastSeenMs;
-      return DateTime.fromMillisecondsSinceEpoch(clampMs, isUtc: true).toLocal();
+      return DateTime.fromMillisecondsSinceEpoch(
+        clampMs,
+        isUtc: true,
+      ).toLocal();
     }
     return dt;
   }
@@ -415,10 +417,10 @@ class TimeIntegrityService {
 
   /// 验签整个信封（便捷方法）
   bool verifyEnvelope(SignedEnvelope env) => verify(
-        body: env.body,
-        timestampMs: env.timestampMs,
-        signatureHex: env.signatureHex,
-      );
+    body: env.body,
+    timestampMs: env.timestampMs,
+    signatureHex: env.signatureHex,
+  );
 
   @visibleForTesting
   Future<void> debugReset() async {
@@ -432,5 +434,9 @@ class TimeIntegrityService {
     _mono.reset();
     await _store.delete(key: _kLastSeenKey);
     await _store.delete(key: _kBackgroundKey);
+  }
+
+  Future<void> resetForWipe() async {
+    await debugReset();
   }
 }
