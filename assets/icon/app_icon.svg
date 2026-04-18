@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- Pure black background -->
+  <rect width="1024" height="1024" fill="#000000"/>
+
+  <!-- Faint horizontal trail hairline -->
+  <line x1="232" y1="512" x2="792" y2="512"
+        stroke="#FFFFFF" stroke-opacity="0.14"
+        stroke-width="2" stroke-linecap="round"/>
+
+  <!-- Subtle glow around the node -->
+  <circle cx="512" cy="512" r="120"
+          fill="#FFFFFF" fill-opacity="0.05"/>
+  <circle cx="512" cy="512" r="80"
+          fill="#FFFFFF" fill-opacity="0.08"/>
+
+  <!-- The node: one solid white dot -->
+  <circle cx="512" cy="512" r="56" fill="#FFFFFF"/>
+</svg>

@@ -1,0 +1,50 @@
+name: trail_app
+description: "迹点（Trail）— 极简人生轨迹记录"
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.11.4
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+
+  # ── 本地数据库（AES-256 加密） ─────────────────
+  hive: ^2.2.3
+  hive_flutter: ^1.1.0
+
+  # ── 核心安全 & 身份 ────────────────────────────
+  # iOS Keychain / Android EncryptedSharedPreferences + Keystore
+  flutter_secure_storage: ^9.2.2
+  # 加密随机 UUID v4
+  uuid: ^4.5.1
+  # SHA-256 / HMAC-SHA256
+  crypto: ^3.0.6
+  # hex 编解码
+  convert: ^3.1.2
+  # AES-256-CBC（用于 .trail 备份加密；Hive 本身使用 HiveAesCipher）
+  encrypt: ^5.0.3
+
+  # ── 文件系统 & 权限 ────────────────────────────
+  path_provider: ^2.1.5
+  permission_handler: ^11.3.1
+  # .trail 备份导入/导出（Android SAF / iOS DocumentPicker）
+  file_picker: ^11.0.2
+  # iOS 导出分享（FilePicker.saveFile 不支持 iOS）
+  share_plus: ^10.1.4
+
+  # ── BLE 点对点配对（无服务器） ─────────────────
+  flutter_blue_plus: ^1.32.12
+  flutter_ble_peripheral: ^2.1.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  hive_generator: ^2.0.1
+  build_runner: ^2.4.0
+
+flutter:
+  uses-material-design: true
