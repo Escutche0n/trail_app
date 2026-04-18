@@ -1,0 +1,86 @@
+name: Android Canary
+
+on:
+  push:
+    tags:
+      - 'android-canary-*'
+
+permissions:
+  contents: write
+
+jobs:
+  release-android-canary:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install Flutter stable
+        run: |
+          git clone https://github.com/flutter/flutter.git --depth 1 -b stable "$HOME/flutter"
+          echo "$HOME/flutter/bin" >> "$GITHUB_PATH"
+          "$HOME/flutter/bin/flutter" --version
+
+      - name: Resolve dependencies
+        run: flutter pub get
+
+      - name: Static analysis
+        run: flutter analyze
+
+      - name: Build Android release APK
+        run: flutter build apk --release
+
+      - name: Prepare release metadata
+        id: meta
+        run: |
+          VERSION="$(sed -n 's/^version: //p' pubspec.yaml | head -n 1)"
+          TAG_NAME="${GITHUB_REF_NAME}"
+          APK_NAME="trail_app-${TAG_NAME}.apk"
+          APK_SRC="build/app/outputs/flutter-apk/app-release.apk"
+          APK_DST="build/app/outputs/flutter-apk/${APK_NAME}"
+          mv "${APK_SRC}" "${APK_DST}"
+          {
+            echo "version=${VERSION}"
+            echo "tag_name=${TAG_NAME}"
+            echo "apk_path=${APK_DST}"
+            echo "apk_name=${APK_NAME}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.meta.outputs.apk_name }}
+          path: ${{ steps.meta.outputs.apk_path }}
+
+      - name: Create release notes
+        run: |
+          cat > release_notes.md <<EOF
+          Android Canary for 迹点
+
+          - Tag: \`${{ steps.meta.outputs.tag_name }}\`
+          - App version: \`${{ steps.meta.outputs.version }}\`
+          - Commit: \`${GITHUB_SHA}\`
+          - Build type: \`flutter build apk --release\`
+          - Signing: debug keystore (internal testing only)
+
+          This pre-release is intended for internal Android testing.
+          EOF
+
+      - name: Publish GitHub pre-release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ steps.meta.outputs.tag_name }}" \
+            "${{ steps.meta.outputs.apk_path }}" \
+            --prerelease \
+            --title "Trail Android Canary ${{ steps.meta.outputs.tag_name }}" \
+            --notes-file release_notes.md
