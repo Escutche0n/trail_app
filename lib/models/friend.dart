@@ -81,7 +81,7 @@ class Friend extends HiveObject {
 ///   field 2 : int     pairedAt.millisecondsSinceEpoch (UTC)
 ///   field 3 : int?    rssi
 ///   field 4 : int     state.index
-///   field 5 : List<String>  checkInDates   (v2 新增；旧数据缺字段 → 空列表)
+///   field 5 : `List<String>` checkInDates  (v2 新增；旧数据缺字段 → 空列表)
 class FriendAdapter extends TypeAdapter<Friend> {
   @override
   final int typeId = 10;
