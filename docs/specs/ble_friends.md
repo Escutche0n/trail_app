@@ -139,13 +139,20 @@ confirmed
 
 ## Open Questions（待 Elvis 决策）
 
-- [ ] iOS 后台模式是否保留？（倾向删除，见 release.md）
 - [ ] 朋友星的 30 天节流是否合适？（和同一朋友频繁相遇只算一次）
 - [ ] v2 共享线最多支持几条？（建议 ≤ 5，避免屏幕拥挤）
 - [ ] unfriend 后历史朋友星是否消失？
   - A: 消失（彻底断联）
   - B: 保留但失去"闪烁"属性变成普通记忆星
   - **建议 B**，情感上更柔和
+
+---
+
+## Dev 增补（2026-04-18）
+
+- Elvis 已确认删除 iOS `UIBackgroundModes` 中的 `bluetooth-central` / `bluetooth-peripheral`
+- 当前主线行为按“仅前台发现”理解
+- 这属于上架收敛，不改变 BLE v1 的配对语义
 
 ---
 

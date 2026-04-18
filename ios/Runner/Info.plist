@@ -9,12 +9,6 @@
 	<string>迹点 使用蓝牙在附近搜索朋友并交换身份码，完全离线、不上传任何数据。</string>
 	<key>NSBluetoothPeripheralUsageDescription</key>
 	<string>迹点 使用蓝牙广播你的身份码，让附近的朋友可以发现你，完全离线。</string>
-	<!-- ── BLE 后台模式 ── -->
-	<key>UIBackgroundModes</key>
-	<array>
-		<string>bluetooth-central</string>
-		<string>bluetooth-peripheral</string>
-	</array>
 	<key>UIMainStoryboardFile</key>
 	<string>Main</string>
 	<key>UIApplicationSceneManifest</key>
