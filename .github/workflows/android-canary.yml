@@ -44,6 +44,7 @@ jobs:
         run: |
           VERSION="$(sed -n 's/^version: //p' pubspec.yaml | head -n 1)"
           TAG_NAME="${GITHUB_REF_NAME}"
+          PREVIOUS_TAG="$(git tag --list 'android-canary-*' --sort=-creatordate | grep -Fxv "${TAG_NAME}" | head -n 1 || true)"
           APK_NAME="trail_app-${TAG_NAME}.apk"
           APK_SRC="build/app/outputs/flutter-apk/app-release.apk"
           APK_DST="build/app/outputs/flutter-apk/${APK_NAME}"
@@ -51,6 +52,7 @@ jobs:
           {
             echo "version=${VERSION}"
             echo "tag_name=${TAG_NAME}"
+            echo "previous_tag=${PREVIOUS_TAG}"
             echo "apk_path=${APK_DST}"
             echo "apk_name=${APK_NAME}"
           } >> "$GITHUB_OUTPUT"
@@ -63,6 +65,20 @@ jobs:
 
       - name: Create release notes
         run: |
+          PREVIOUS_TAG="${{ steps.meta.outputs.previous_tag }}"
+          if [[ -n "${PREVIOUS_TAG}" ]]; then
+            RANGE="${PREVIOUS_TAG}..${GITHUB_SHA}"
+            CHANGE_HEADER="Changes since \`${PREVIOUS_TAG}\`"
+            CHANGES="$(git log --format='- %h %s' "${RANGE}")"
+          else
+            CHANGE_HEADER="Recent commits included in this canary"
+            CHANGES="$(git log --format='- %h %s' -n 12 "${GITHUB_SHA}")"
+          fi
+
+          if [[ -z "${CHANGES}" ]]; then
+            CHANGES="- No commit summary available."
+          fi
+
           cat > release_notes.md <<EOF
           Android Canary for 迹点
 
@@ -71,6 +87,10 @@ jobs:
           - Commit: \`${GITHUB_SHA}\`
           - Build type: \`flutter build apk --release\`
           - Signing: debug keystore (internal testing only)
+
+          ${CHANGE_HEADER}
+
+          ${CHANGES}
 
           This pre-release is intended for internal Android testing.
           EOF
