@@ -59,7 +59,6 @@ class _HomePageState extends State<HomePage>
   /// 行间距 — 由用户在设置中通过滑块调整（48-80 dp），默认 64 dp。
   /// 新功能关闭时回到原始 72 dp。
   double _rowSpacing = StorageService.defaultNodeSpacing;
-  static const double _legacyRowSpacing = 72.0;
   static const double _pullUpThreshold = 84.0; // 旧版兼容保留
   double _vScroll = 0.0;
   double _vScrollMax = 0.0;
@@ -90,7 +89,7 @@ class _HomePageState extends State<HomePage>
   /// 亮度脉冲，给 Elvis 观察"BLE 真的握上了"的可视信号。不论是 cache 命中还是
   /// probe 成功都触发——两者都是有效 BLE 证据。
   ///
-  /// 与 soul #11 的关系：一次性 transient 动画（350ms 后自止），不是常驻呼吸，
+  /// 与 soul #11 的关系：一次性 transient 动画（360ms 后自止），不是常驻呼吸，
   /// 不在禁止列表内。
   late AnimationController _bleFlash;
   String? _bleFlashKey;
@@ -99,9 +98,13 @@ class _HomePageState extends State<HomePage>
   late AnimationController _lineAddAnim; // 新增行动线淡入
   late AnimationController _lineDeleteAnim; // 删除行动线淡出
   late AnimationController _satellite; // 卫星点旋转（10 s 一圈）
+  late AnimationController _todayNodeLinkAnim; // 今日节点连线出现/消失
   late AnimationController _menuAnim; // 节点 4 向菜单展开
   late AnimationController _dayAxisReveal; // 日期列虚线出现
   String? _deletingLineId;
+  String? _todayNodeFxLineId;
+  int? _todayNodeFxFromDayIndex;
+  bool _todayNodeFxAppearing = true;
 
   // ── 删除态（仅旧版） ─────────────────────────
   String? _deleteModeLineId;
@@ -129,10 +132,15 @@ class _HomePageState extends State<HomePage>
 
   // ── 视口 ──────────────────────────────────────
   Size _viewport = Size.zero;
+  double _topInset = 0.0;
 
   // ── 偏好（v2 升级） ──────────────────────────
+  // “新版交互”已成为唯一入口，旧总开关不再对用户暴露。
   bool _newFeaturesEnabled = true;
   bool _satelliteRotationEnabled = true;
+  bool _constellationVisible = true;
+  ConstellationHeightMode _constellationHeightMode =
+      ConstellationHeightMode.standard;
   int _pendingFriendCount = 0;
   int _confirmedFriendCount = 0;
   // 每位 confirmed 朋友一条时间线；按 pairedAt 升序排列
@@ -152,6 +160,9 @@ class _HomePageState extends State<HomePage>
   static const String _aliveId = '__alive__';
   static const double _nodeHitRadius = 26.0;
   static const double _satelliteRingRadius = 11.0;
+  static const double _headerBlockHeight = 92.0;
+  static const double _headerTopPadding = 24.0;
+  static const double _constellationHeaderGap = 4.0;
   // 4 向操作菜单：45° 对角菱形排布
   static const double _menuIconRadius = 52.0;
   static const double _menuIconHitSize = 36.0;
@@ -187,9 +198,11 @@ class _HomePageState extends State<HomePage>
     _hasFirstTrack =
         StorageService.instance.firstTrackAdded || _customLines.isNotEmpty;
 
+    // 时长 ladder（spec 「今天增量语法」延伸 · 2026-04-19）：
+    //   micro 200ms · standard 360ms · structural 800ms · background 不动
     _hSnap = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 150),
+      duration: const Duration(milliseconds: 200), // micro
     )..addListener(_onHSnapTick);
 
     _vSpring = AnimationController.unbounded(vsync: this)
@@ -206,17 +219,17 @@ class _HomePageState extends State<HomePage>
     )..repeat(reverse: true);
 
     _bounce = AnimationController(
-      duration: const Duration(milliseconds: 420),
+      duration: const Duration(milliseconds: 360), // standard
       vsync: this,
     );
 
     _bleFlash = AnimationController(
-      duration: const Duration(milliseconds: 350),
+      duration: const Duration(milliseconds: 360), // standard
       vsync: this,
     );
 
     _shake = AnimationController(
-      duration: const Duration(milliseconds: 260),
+      duration: const Duration(milliseconds: 200), // micro
       vsync: this,
     );
 
@@ -232,10 +245,23 @@ class _HomePageState extends State<HomePage>
     );
 
     _lineDeleteAnim = AnimationController(
-      duration: const Duration(milliseconds: 280),
+      duration: const Duration(milliseconds: 360), // standard，与 add 同档
       vsync: this,
       value: 1.0,
     );
+
+    _todayNodeLinkAnim =
+        AnimationController(
+          duration: const Duration(milliseconds: 800), // structural，spec 钉死
+          vsync: this,
+        )..addStatusListener((status) {
+          if (status == AnimationStatus.completed && mounted) {
+            setState(() {
+              _todayNodeFxLineId = null;
+              _todayNodeFxFromDayIndex = null;
+            });
+          }
+        });
 
     _satellite = AnimationController(
       duration: const Duration(seconds: 10),
@@ -249,19 +275,19 @@ class _HomePageState extends State<HomePage>
     );
 
     _dayAxisReveal = AnimationController(
-      duration: const Duration(milliseconds: 220),
+      duration: const Duration(milliseconds: 200), // micro
       vsync: this,
       value: 1.0,
     );
 
     _centerLineAnim = AnimationController(
-      duration: const Duration(milliseconds: 900),
+      duration: const Duration(milliseconds: 800), // structural
       vsync: this,
       value: _hasFirstTrack ? 1.0 : 0.0,
     );
 
     _radialAnim = AnimationController(
-      duration: const Duration(milliseconds: 320),
+      duration: const Duration(milliseconds: 360), // standard
       vsync: this,
     );
 
@@ -305,6 +331,9 @@ class _HomePageState extends State<HomePage>
       ..stop()
       ..dispose();
     _lineDeleteAnim
+      ..stop()
+      ..dispose();
+    _todayNodeLinkAnim
       ..stop()
       ..dispose();
     _satellite
@@ -356,18 +385,44 @@ class _HomePageState extends State<HomePage>
 
   void _loadPrefs() {
     final s = StorageService.instance;
-    _newFeaturesEnabled = s.newFeaturesEnabled;
+    _newFeaturesEnabled = true;
     _satelliteRotationEnabled = s.satelliteRotationEnabled;
-    _rowSpacing = _newFeaturesEnabled ? s.nodeSpacing : _legacyRowSpacing;
+    _constellationVisible = s.constellationVisible;
+    _constellationHeightMode = s.constellationHeightMode;
+    _rowSpacing = s.nodeSpacing;
   }
 
   void _applySatelliteRotation() {
-    if (_newFeaturesEnabled && _satelliteRotationEnabled) {
+    if (_satelliteRotationEnabled) {
       if (!_satellite.isAnimating) _satellite.repeat();
     } else {
       _satellite.stop();
       _satellite.value = 0;
     }
+  }
+
+  double _constellationBandHeight(double vh) {
+    if (!_constellationVisible) return 0.0;
+    return switch (_constellationHeightMode) {
+      ConstellationHeightMode.compact => (vh * 0.10).clamp(84.0, 104.0),
+      ConstellationHeightMode.standard => (vh * 0.15).clamp(116.0, 146.0),
+      ConstellationHeightMode.expansive => (vh * 0.21).clamp(156.0, 202.0),
+    };
+  }
+
+  double _constellationVisibleHeight(double aliveY, double topInset) {
+    if (!_constellationVisible) return 0.0;
+    final bottomY = aliveY - 96.0;
+    final available = max(0.0, bottomY - (topInset + 8.0));
+    return min(available, _constellationBandHeight(_viewport.height));
+  }
+
+  double _constellationBottomY(double aliveY) {
+    return switch (_constellationHeightMode) {
+      ConstellationHeightMode.compact => aliveY - 56.0,
+      ConstellationHeightMode.standard => aliveY - 34.0,
+      ConstellationHeightMode.expansive => aliveY - 26.0,
+    };
   }
 
   // ─────────────────────────────────────────────
@@ -438,10 +493,8 @@ class _HomePageState extends State<HomePage>
 
     return confirmed.map((f) {
       final created = DateUtils.dateOnly(f.pairedAt);
-      final dates = <String>{
-        _dateKey(created),
-        ...f.checkInDates,
-      }.toList()..sort();
+      final dates = <String>{_dateKey(created), ...f.checkInDates}.toList()
+        ..sort();
       return TrailLine.fromType(
         id: _friendLineId(f.uid),
         type: TrailLineType.custom,
@@ -488,8 +541,17 @@ class _HomePageState extends State<HomePage>
   double _screenXForDay(int dayIndex, double vw) =>
       vw / 2 + (dayIndex - _todayIndex) * _dayWidth - _hScroll;
 
-  /// 「活着」基准行的 Y：沿用初版视口 40% 的位置，为上方的内嵌 3 行文字块留出呼吸空间。
-  double _aliveY(double vh) => vh * 0.40;
+  /// 「活着」基准行的 Y：由顶部版式预算推导，而不是固定写死百分比。
+  /// 星图关闭或变紧凑时，header 与主轴会一起上移，避免顶部留下空白壳层。
+  double _aliveY(double vh) {
+    final topBudget =
+        _topInset +
+        _headerTopPadding +
+        _headerBlockHeight +
+        _constellationBandHeight(vh) +
+        (_constellationVisible ? _constellationHeaderGap : 0.0);
+    return topBudget.clamp(132.0, vh * 0.52);
+  }
 
   /// 第 k 个自定义行的 Y（k 从 0 起）
   double _customRowY(int k, double vh) =>
@@ -984,9 +1046,12 @@ class _HomePageState extends State<HomePage>
       StorageService.instance.markTapTodayDone();
       HapticService.onboardingComplete();
     }
+    final previousCheckedDates = _checkedDatesForLine(lineId);
+    final previousDayIndex = _latestCheckedDayBeforeToday(previousCheckedDates);
+    bool nowChecked;
     try {
       if (lineId == _aliveId) {
-        await StorageService.instance.toggleAliveToday();
+        nowChecked = await StorageService.instance.toggleAliveToday();
         if (!mounted) return;
         _aliveCheckIns = StorageService.instance.getCheckInDates();
         _computeGapData();
@@ -998,9 +1063,7 @@ class _HomePageState extends State<HomePage>
         // 仅当对方 BLE 在范围内才允许对今日打卡（过去节点不可修改）。
         // 若缓存未命中，启动一次短窗口主动探测（方案 B）；否则走快速路径。
         bool inRange = BleService.instance.isPeerInRange(friend.uid);
-        debugPrint(
-          '[FRIEND_TAP] uid=${friend.uid} cacheHit=$inRange',
-        );
+        debugPrint('[FRIEND_TAP] uid=${friend.uid} cacheHit=$inRange');
         if (!inRange) {
           inRange = await _probeFriendInRange(friend.uid);
           debugPrint('[FRIEND_TAP] probe result inRange=$inRange');
@@ -1012,8 +1075,10 @@ class _HomePageState extends State<HomePage>
         }
         if (friend.checkInDates.contains(todayKey)) {
           friend.checkInDates.remove(todayKey);
+          nowChecked = false;
         } else {
           friend.checkInDates.add(todayKey);
+          nowChecked = true;
         }
         await friend.save();
         if (!mounted) return;
@@ -1029,8 +1094,11 @@ class _HomePageState extends State<HomePage>
           debugPrint('==== WARNING: toggleNode line not found: $lineId ====');
           return;
         }
-        await StorageService.instance.toggleCustomTodayForLine(line);
+        nowChecked = await StorageService.instance.toggleCustomTodayForLine(
+          line,
+        );
         if (!mounted) return;
+        _customLines = StorageService.instance.getCustomLines();
         _bounceKey = lineId;
       }
     } on TimeTamperedException {
@@ -1040,7 +1108,66 @@ class _HomePageState extends State<HomePage>
     }
     HapticService.checkInToggle();
     _bounce.forward(from: 0);
+    _startTodayNodeFx(
+      lineId: lineId,
+      fromDayIndex: previousDayIndex,
+      appearing: nowChecked,
+    );
     setState(() {});
+  }
+
+  Set<String> _checkedDatesForLine(String lineId) {
+    if (lineId == _aliveId) return {..._aliveCheckIns};
+    if (_friendLineIds.contains(lineId)) {
+      final friend = _friendsById[lineId];
+      if (friend == null) return <String>{};
+      return {...friend.checkInDates};
+    }
+    final line = _findCustomLine(lineId);
+    return line == null ? <String>{} : {...line.completedDates};
+  }
+
+  int? _latestCheckedDayBeforeToday(Set<String> checkedDates) {
+    int? latest;
+    for (final key in checkedDates) {
+      final date = _parseDateKey(key);
+      final diff = DateUtils.dateOnly(
+        date,
+      ).difference(DateUtils.dateOnly(_startDate)).inDays;
+      if (diff >= _todayIndex) continue;
+      if (latest == null || diff > latest) latest = diff;
+    }
+    return latest;
+  }
+
+  /// 返回给定 lineId 对应时间轴行的屏幕 Y；未知行返回 null。
+  /// 仅用于把时间轴 today-node 的位置投影给顶部星图作为极罕见兜底 origin。
+  double? _rowScreenYForLine(String lineId, double vh) {
+    if (lineId == _aliveId) return _aliveY(vh);
+    if (_friendLineIds.contains(lineId)) {
+      final j = _friendLines.indexWhere((f) => f.id == lineId);
+      if (j < 0) return null;
+      return _customRowY(_customLines.length + j, vh);
+    }
+    final k = _customLines.indexWhere((l) => l.id == lineId);
+    if (k < 0) return null;
+    return _customRowY(k, vh);
+  }
+
+  DateTime _parseDateKey(String key) {
+    final p = key.split('-');
+    return DateTime(int.parse(p[0]), int.parse(p[1]), int.parse(p[2]));
+  }
+
+  void _startTodayNodeFx({
+    required String lineId,
+    required int? fromDayIndex,
+    required bool appearing,
+  }) {
+    _todayNodeFxLineId = lineId;
+    _todayNodeFxFromDayIndex = fromDayIndex;
+    _todayNodeFxAppearing = appearing;
+    _todayNodeLinkAnim.forward(from: 0);
   }
 
   // ─────────────────────────────────────────────
@@ -1649,7 +1776,8 @@ class _HomePageState extends State<HomePage>
       body: LayoutBuilder(
         builder: (ctx, cons) {
           final size = Size(cons.maxWidth, cons.maxHeight);
-          if (_viewport != size) {
+          if (_viewport != size || _topInset != mediaPad.top) {
+            _topInset = mediaPad.top;
             _recomputeBounds(size);
           }
 
@@ -1674,16 +1802,45 @@ class _HomePageState extends State<HomePage>
               // 旧版 AnimatedBuilder 包装会让它每帧都参与脏标记，纯浪费。
               const IgnorePointer(child: AltoBackground()),
               // ── 星图背景装饰（仅过去节点）──
-              // bottomY = 暂居天数文本上沿（aliveY - 96）：留给 Header 三行文字呼吸
-              Positioned.fill(
-                child: ConstellationBackground(
-                  aliveCheckIns: _aliveCheckIns,
-                  customLines: _customLines,
-                  today: _today,
-                  topInset: mediaPad.top,
-                  bottomY: aliveYpx - 96.0,
+              // 允许星点进入三行字下方区域，避免顶部版式过平。
+              if (_constellationVisible)
+                Positioned.fill(
+                  child: AnimatedBuilder(
+                    animation: _todayNodeLinkAnim,
+                    builder: (context, _) {
+                      Offset? timelineTodayNodePos;
+                      final fxLineId = _todayNodeFxLineId;
+                      if (fxLineId != null) {
+                        final rowY = _rowScreenYForLine(
+                          fxLineId,
+                          cons.maxHeight,
+                        );
+                        if (rowY != null) {
+                          timelineTodayNodePos = Offset(
+                            _screenXForDay(_todayIndex, cons.maxWidth),
+                            rowY,
+                          );
+                        }
+                      }
+                      return ConstellationBackground(
+                        aliveCheckIns: _aliveCheckIns,
+                        customLines: _customLines,
+                        today: _today,
+                        topInset: mediaPad.top,
+                        bottomY: _constellationBottomY(aliveYpx),
+                        visibleHeight: _constellationVisibleHeight(
+                          aliveYpx,
+                          mediaPad.top,
+                        ),
+                        todayFxValue: _todayNodeLinkAnim.value,
+                        todayFxLineId: _todayNodeFxLineId,
+                        todayFxFromDayIndex: _todayNodeFxFromDayIndex,
+                        todayFxAppearing: _todayNodeFxAppearing,
+                        timelineTodayNodeScreenPos: timelineTodayNodePos,
+                      );
+                    },
+                  ),
                 ),
-              ),
               // ── 时间轴 ──
               _buildGestureLayer(
                 child: AnimatedBuilder(
@@ -1695,6 +1852,7 @@ class _HomePageState extends State<HomePage>
                     _arrowPulse,
                     _lineAddAnim,
                     _lineDeleteAnim,
+                    _todayNodeLinkAnim,
                     _satellite,
                     _centerLineAnim,
                     _dayAxisReveal,
@@ -1720,6 +1878,7 @@ class _HomePageState extends State<HomePage>
                         vScroll: _vScroll,
                         pullUp: _pullUp,
                         rowSpacing: _rowSpacing,
+                        aliveY: aliveYpx,
                         viewportWidth: cons.maxWidth,
                         viewportHeight: cons.maxHeight,
                         glowValue: _glow.value,
@@ -1731,6 +1890,10 @@ class _HomePageState extends State<HomePage>
                         arrowPulse: _arrowPulse.value,
                         lineAddValue: _lineAddAnim.value,
                         lineDeleteValue: _lineDeleteAnim.value,
+                        todayNodeFxValue: _todayNodeLinkAnim.value,
+                        todayNodeFxLineId: _todayNodeFxLineId,
+                        todayNodeFxFromDayIndex: _todayNodeFxFromDayIndex,
+                        todayNodeFxAppearing: _todayNodeFxAppearing,
                         deletingLineId: _deletingLineId,
                         deleteModeLineId: _deleteModeLineId,
                         gapData: _gapData,
@@ -1851,9 +2014,7 @@ class _HomePageState extends State<HomePage>
         LongPressGestureRecognizer:
             GestureRecognizerFactoryWithHandlers<LongPressGestureRecognizer>(
               () => LongPressGestureRecognizer(
-                duration: _newFeaturesEnabled
-                    ? const Duration(milliseconds: 300)
-                    : kLongPressTimeout,
+                duration: const Duration(milliseconds: 300),
               ),
               (instance) {
                 instance.onLongPressStart = _onLongPressStart;
@@ -3280,6 +3441,7 @@ class _TimelinePainter extends CustomPainter {
   final double vScroll;
   final double pullUp;
   final double rowSpacing;
+  final double aliveY;
   final double viewportWidth;
   final double viewportHeight;
   final double glowValue;
@@ -3291,6 +3453,10 @@ class _TimelinePainter extends CustomPainter {
   final double arrowPulse;
   final double lineAddValue;
   final double lineDeleteValue;
+  final double todayNodeFxValue;
+  final String? todayNodeFxLineId;
+  final int? todayNodeFxFromDayIndex;
+  final bool todayNodeFxAppearing;
   final String? deletingLineId;
   final String? deleteModeLineId;
   final Map<int, int> gapData;
@@ -3328,6 +3494,7 @@ class _TimelinePainter extends CustomPainter {
     required this.vScroll,
     required this.pullUp,
     required this.rowSpacing,
+    required this.aliveY,
     required this.viewportWidth,
     required this.viewportHeight,
     required this.glowValue,
@@ -3339,6 +3506,10 @@ class _TimelinePainter extends CustomPainter {
     required this.arrowPulse,
     required this.lineAddValue,
     required this.lineDeleteValue,
+    required this.todayNodeFxValue,
+    required this.todayNodeFxLineId,
+    required this.todayNodeFxFromDayIndex,
+    required this.todayNodeFxAppearing,
     required this.deletingLineId,
     required this.deleteModeLineId,
     required this.gapData,
@@ -3363,8 +3534,7 @@ class _TimelinePainter extends CustomPainter {
   double _screenX(int dayIndex) =>
       viewportWidth / 2 + (dayIndex - todayIndex) * dayWidth - hScroll;
 
-  double get _aliveY => viewportHeight * 0.40;
-  double _customY(int k) => _aliveY + (k + 1) * rowSpacing - vScroll;
+  double _customY(int k) => aliveY + (k + 1) * rowSpacing - vScroll;
 
   int _lineStartIndex(DateTime createdAt) {
     final created = DateUtils.dateOnly(createdAt);
@@ -3379,6 +3549,15 @@ class _TimelinePainter extends CustomPainter {
       if (checkedDates.contains(_dateKey(date))) return i;
     }
     return fallbackStartDay;
+  }
+
+  int? _latestCheckedDayBeforeToday(Set<String> checkedDates) {
+    final upper = min(todayIndex - 1, totalDays - 1);
+    for (int i = upper; i >= 0; i--) {
+      final date = startDate.add(Duration(days: i));
+      if (checkedDates.contains(_dateKey(date))) return i;
+    }
+    return null;
   }
 
   int get _firstVisible {
@@ -3415,7 +3594,7 @@ class _TimelinePainter extends CustomPainter {
     // ── 基准线：活着 ──
     _paintRow(
       canvas: canvas,
-      y: _aliveY,
+      y: aliveY,
       lineId: '__alive__',
       lineName: '活着',
       isAlive: true,
@@ -3433,7 +3612,7 @@ class _TimelinePainter extends CustomPainter {
         _drawText(
           canvas,
           '你已在这个星球上暂居 $survivalDays 天',
-          Offset(todayX, _aliveY - 44),
+          Offset(todayX, aliveY - 44),
           const Color(0x99FFFFFF),
           12.0,
           FontWeight.w300,
@@ -3546,7 +3725,7 @@ class _TimelinePainter extends CustomPainter {
 
   void _paintCenterAxis(Canvas canvas) {
     final x = viewportWidth / 2;
-    final top = _aliveY;
+    final top = aliveY;
     final targetBottom = _bottomYForDay(_centerVisibleDay);
     if (targetBottom == null || targetBottom - top < 1) return;
 
@@ -3572,19 +3751,19 @@ class _TimelinePainter extends CustomPainter {
       if (dayIndex == _centerVisibleDay) continue;
 
       final bottomY = _bottomYForDay(dayIndex);
-      if (bottomY == null || bottomY - _aliveY < 1) continue;
+      if (bottomY == null || bottomY - aliveY < 1) continue;
 
       final x = _screenX(dayIndex);
       if (x < -dayWidth || x > viewportWidth + dayWidth) continue;
       final reveal = Curves.easeOutCubic.transform(
         dayAxisReveal.clamp(0.0, 1.0),
       );
-      final animatedBottom = _aliveY + (bottomY - _aliveY) * reveal;
-      if (animatedBottom - _aliveY < 1) continue;
+      final animatedBottom = aliveY + (bottomY - aliveY) * reveal;
+      if (animatedBottom - aliveY < 1) continue;
 
       _drawDashedLine(
         canvas,
-        Offset(x, _aliveY),
+        Offset(x, aliveY),
         Offset(x, animatedBottom),
         const Color(0x24FFFFFF),
         dashWidth: 4,
@@ -3602,7 +3781,7 @@ class _TimelinePainter extends CustomPainter {
     double? bottomY;
 
     if (aliveCheckIns.contains(key)) {
-      bottomY = _aliveY;
+      bottomY = aliveY;
     }
 
     for (int i = 0; i < customLines.length; i++) {
@@ -3646,6 +3825,14 @@ class _TimelinePainter extends CustomPainter {
 
     final clippedReveal = revealProgress.clamp(0.0, 1.0);
     final revealT = Curves.easeOutCubic.transform(clippedReveal);
+    final todayKey = _dateKey(startDate.add(Duration(days: todayIndex)));
+    final todayChecked = checkedDates.contains(todayKey);
+    final isActiveTodayFx = todayNodeFxLineId == lineId;
+    final todayBridgeFrom = todayChecked
+        ? _latestCheckedDayBeforeToday(checkedDates)
+        : (!todayNodeFxAppearing && isActiveTodayFx
+              ? todayNodeFxFromDayIndex
+              : null);
     if (!isAlive &&
         clippedReveal < 1.0 &&
         revealFromDay != null &&
@@ -3659,7 +3846,6 @@ class _TimelinePainter extends CustomPainter {
         ..strokeCap = StrokeCap.round;
       canvas.drawLine(Offset(startX, y), Offset(progressX, y), progressPaint);
 
-      final todayKey = _dateKey(startDate.add(Duration(days: todayIndex)));
       if (!checkedDates.contains(todayKey) && revealToDay == todayIndex) {
         _drawHollowNode(
           canvas,
@@ -3709,7 +3895,7 @@ class _TimelinePainter extends CustomPainter {
     double overlapAlpha = 1.0;
     if (!isAlive) {
       // 从低于日期轴约半档的位置开始渐隐，越贴近日期轴透明度越低。
-      final anchorY = _aliveY;
+      final anchorY = aliveY;
       final fadeStart = anchorY + rowSpacing * 0.55;
       final fadeEnd = anchorY + 10.0;
       if (y <= fadeStart) {
@@ -3746,7 +3932,16 @@ class _TimelinePainter extends CustomPainter {
       );
 
       final bothChecked = c1 && c2;
+      final isTodayBridgeSegment =
+          i + 1 == todayIndex &&
+          todayChecked &&
+          todayBridgeFrom == i &&
+          isActiveTodayFx &&
+          todayNodeFxAppearing;
       if (bothChecked) {
+        if (isTodayBridgeSegment) {
+          continue;
+        }
         final paint = Paint()
           ..color = Colors.white.withAlpha((255 * segmentAlpha).round())
           ..strokeWidth = isFocusSegment ? 1.35 : 1.0
@@ -3777,6 +3972,49 @@ class _TimelinePainter extends CustomPainter {
       }
     }
 
+    if (todayBridgeFrom != null) {
+      final startX = _screenX(todayBridgeFrom) + shakeDx;
+      final endX = _screenX(todayIndex) + shakeDx;
+      final isGapBridge = todayIndex - todayBridgeFrom > 1;
+      final isFocusBridge =
+          todayBridgeFrom == _centerVisibleDay ||
+          todayIndex == _centerVisibleDay;
+      final bridgeAlpha = (effRowAlpha * (isFocusBridge ? 1.28 : 1.0)).clamp(
+        0.0,
+        1.0,
+      );
+      final bridgeProgress = isActiveTodayFx
+          ? (todayNodeFxAppearing
+                ? Curves.easeOutCubic.transform(
+                    todayNodeFxValue.clamp(0.0, 1.0),
+                  )
+                : 1.0 -
+                      Curves.easeOutCubic.transform(
+                        todayNodeFxValue.clamp(0.0, 1.0),
+                      ))
+          : (todayChecked ? 1.0 : 0.0);
+      if (bridgeProgress > 0.0) {
+        final bridgePaint = Paint()
+          ..color = Colors.white.withAlpha((255 * bridgeAlpha).round())
+          ..strokeWidth = isFocusBridge ? 1.35 : 1.0
+          ..strokeCap = StrokeCap.round;
+        final bridgeX = ui.lerpDouble(startX, endX, bridgeProgress)!;
+        if (isGapBridge) {
+          _drawDashedLine(
+            canvas,
+            Offset(startX, y),
+            Offset(bridgeX, y),
+            Color.fromRGBO(255, 255, 255, bridgeAlpha),
+            dashWidth: 3,
+            gapWidth: 3,
+            strokeWidth: isFocusBridge ? 1.15 : 1.0,
+          );
+        } else {
+          canvas.drawLine(Offset(startX, y), Offset(bridgeX, y), bridgePaint);
+        }
+      }
+    }
+
     // ── 节点 ──
     for (int i = firstDay; i <= endDay; i++) {
       final x = _screenX(i) + shakeDx;
@@ -3788,6 +4026,8 @@ class _TimelinePainter extends CustomPainter {
       final dKey = _dateKey(date);
       final checked = checkedDates.contains(dKey);
       final isFocusCol = i == _centerVisibleDay;
+      final isTodayNodeFxActive = todayNodeFxLineId == lineId && isTodayCol;
+      final suppressStaticTodayNode = isTodayNodeFxActive;
 
       final futureFade = isFuture ? 0.35 : 1.0;
       double effAlpha = (effRowAlpha * futureFade * (isFocusCol ? 1.25 : 1.0))
@@ -3802,6 +4042,9 @@ class _TimelinePainter extends CustomPainter {
           bounceScale *= 1.25 - (t - 0.4) / 0.6 * 0.25;
         }
       }
+      final todayNodeScale = isTodayNodeFxActive
+          ? (isFocusCol ? 1.05 : 1.0)
+          : bounceScale;
 
       // BLE 验证成功的一次性亮度脉冲（仅朋友行今日节点）。
       // 轨迹：alpha *= 1 + 0.7 * sin(π * t)，t∈(0,1)。t=0/1 时为 1x，t=0.5 时峰值 1.7x。
@@ -3832,17 +4075,20 @@ class _TimelinePainter extends CustomPainter {
         canvas.drawCircle(Offset(x, y), 11.0 + 2.0 * accent, glowPaint);
       }
 
-      if (isTodayCol && isAlive) {
+      if (suppressStaticTodayNode) {
+        // today FX 期间保留终点位的大节点占位，避免“小点滑过去，末端再突然变大”。
+        _drawTodayHollow(canvas, x, y, todayNodeScale, effAlpha);
+      } else if (isTodayCol && isAlive) {
         if (checked) {
-          _drawTodayAliveSolid(canvas, x, y, bounceScale, effAlpha);
+          _drawTodayAliveSolid(canvas, x, y, todayNodeScale, effAlpha);
         } else {
-          _drawTodayHollow(canvas, x, y, bounceScale, effAlpha);
+          _drawTodayHollow(canvas, x, y, todayNodeScale, effAlpha);
         }
       } else if (isTodayCol && !isAlive) {
         if (checked) {
-          _drawTodayCustomSolid(canvas, x, y, bounceScale, effAlpha);
+          _drawTodayCustomSolid(canvas, x, y, todayNodeScale, effAlpha);
         } else {
-          _drawTodayHollow(canvas, x, y, bounceScale, effAlpha);
+          _drawTodayHollow(canvas, x, y, todayNodeScale, effAlpha);
         }
       } else if (checked) {
         _drawSolidNode(canvas, x, y, effAlpha);
@@ -3947,6 +4193,18 @@ class _TimelinePainter extends CustomPainter {
           );
         }
       }
+
+      if (isTodayNodeFxActive) {
+        _paintTodayNodeToggleFx(
+          canvas: canvas,
+          x: x,
+          y: y,
+          rowAlpha: effAlpha,
+          isAlive: isAlive,
+          scale: todayNodeScale,
+          fromDayIndex: todayNodeFxFromDayIndex,
+        );
+      }
     }
 
     // ── 行名标签 ──
@@ -3990,6 +4248,61 @@ class _TimelinePainter extends CustomPainter {
     if (clippedReveal < 1.0) {
       canvas.restore();
     }
+  }
+
+  void _paintTodayNodeToggleFx({
+    required Canvas canvas,
+    required double x,
+    required double y,
+    required double rowAlpha,
+    required bool isAlive,
+    required double scale,
+    required int? fromDayIndex,
+  }) {
+    final v = todayNodeFxValue.clamp(0.0, 1.0);
+    // 按 spec「今天增量语法」：appearing = easeOutCubic，取消 = easeInCubic，
+    // 使 progress = 1 - easeInCubic(v) 与 appearing 的几何完全时间对称（慢离→快归）。
+    final eased = todayNodeFxAppearing
+        ? Curves.easeOutCubic.transform(v)
+        : Curves.easeInCubic.transform(v);
+    final progress = todayNodeFxAppearing ? eased : (1.0 - eased);
+    if (progress <= 0.0) return;
+
+    final fromDay = todayNodeFxFromDayIndex;
+    final startX = fromDay == null ? x : _screenX(fromDay);
+    final headX = ui.lerpDouble(startX, x, progress)!;
+    final linePaint = Paint()
+      ..color = Color.fromRGBO(255, 255, 255, (0.92 * rowAlpha).clamp(0.0, 1.0))
+      ..strokeWidth = 1.2
+      ..strokeCap = StrokeCap.round;
+    final isGapBridge = fromDayIndex != null && todayIndex - fromDayIndex > 1;
+    if (isGapBridge) {
+      _drawDashedLine(
+        canvas,
+        Offset(startX, y),
+        Offset(headX, y),
+        Color.fromRGBO(255, 255, 255, (0.48 * rowAlpha).clamp(0.0, 1.0)),
+        dashWidth: 2.5,
+        gapWidth: 3.5,
+        strokeWidth: 0.8,
+      );
+    } else {
+      canvas.drawLine(Offset(startX, y), Offset(headX, y), linePaint);
+    }
+
+    final sourceRadius = 3.6;
+    final targetRadius = (isAlive ? 6.0 : 5.0) * scale;
+    final currentRadius = ui.lerpDouble(sourceRadius, targetRadius, progress)!;
+    final glowRadius = currentRadius + (isAlive ? 2.0 : 1.8);
+    final glowAlpha = ((isAlive ? 0.08 : 0.05) * rowAlpha).clamp(0.0, 1.0);
+    final glowPaint = Paint()
+      ..color = Color.fromRGBO(255, 255, 255, glowAlpha)
+      ..maskFilter = MaskFilter.blur(BlurStyle.normal, glowRadius);
+    canvas.drawCircle(Offset(headX, y), currentRadius + 1.2, glowPaint);
+
+    final headPaint = Paint()
+      ..color = Color.fromRGBO(255, 255, 255, rowAlpha.clamp(0.0, 1.0));
+    canvas.drawCircle(Offset(headX, y), currentRadius, headPaint);
   }
 
   // ─────────────────────────────────────────────
@@ -4174,7 +4487,7 @@ class _TimelinePainter extends CustomPainter {
 
   void _paintHOnboarding(Canvas canvas) {
     final x = _screenX(todayIndex);
-    final y = _aliveY;
+    final y = aliveY;
     final pulse = (sin(arrowPulse * pi * 2) + 1) / 2;
     final drift = 4.0 + pulse * 3.0;
     final arrowColor = Color.fromRGBO(255, 255, 255, 0.18 + pulse * 0.22);
@@ -4207,7 +4520,7 @@ class _TimelinePainter extends CustomPainter {
 
   void _paintVOnboarding(Canvas canvas) {
     final x = _screenX(todayIndex);
-    final y = _aliveY;
+    final y = aliveY;
     final pulse = (sin(arrowPulse * pi * 2) + 1) / 2;
     final drift = 6.0 + pulse * 4.0;
     final arrowColor = Color.fromRGBO(255, 255, 255, 0.18 + pulse * 0.22);
@@ -4238,7 +4551,7 @@ class _TimelinePainter extends CustomPainter {
     final birthDayIndex = -survivalDays;
     final x = _screenX(birthDayIndex);
     if (x < -40 || x > viewportWidth + 40) return;
-    final y = _aliveY;
+    final y = aliveY;
 
     // 空心节点 + 外圈呼吸
     final pulse = (sin(arrowPulse * pi * 2) + 1) / 2;
@@ -4263,7 +4576,7 @@ class _TimelinePainter extends CustomPainter {
     final x = _screenX(todayIndex);
     // 仅当今日节点仍在视野内时才绘制引导
     if (x < -40 || x > viewportWidth + 40) return;
-    final y = _aliveY;
+    final y = aliveY;
     final t = arrowPulse; // 0..1..0 (反复)
     final phase = (sin(t * pi * 2) + 1) / 2; // 0..1
     // 多层涟漪：2 圈以错位相位
@@ -4290,7 +4603,7 @@ class _TimelinePainter extends CustomPainter {
 
   void _paintRadialMenuHint(Canvas canvas) {
     final x = viewportWidth / 2;
-    final y = (viewportHeight * 0.68).clamp(_aliveY + 72, viewportHeight - 96);
+    final y = (viewportHeight * 0.68).clamp(aliveY + 72, viewportHeight - 96);
     final phase = (sin(arrowPulse * pi * 2) + 1) / 2;
 
     for (int i = 0; i < 2; i++) {
@@ -4428,6 +4741,7 @@ class _TimelinePainter extends CustomPainter {
         old.vScroll != vScroll ||
         old.pullUp != pullUp ||
         old.rowSpacing != rowSpacing ||
+        old.aliveY != aliveY ||
         old.viewportWidth != viewportWidth ||
         old.viewportHeight != viewportHeight ||
         old.glowValue != glowValue ||
@@ -4439,6 +4753,10 @@ class _TimelinePainter extends CustomPainter {
         old.arrowPulse != arrowPulse ||
         old.lineAddValue != lineAddValue ||
         old.lineDeleteValue != lineDeleteValue ||
+        old.todayNodeFxValue != todayNodeFxValue ||
+        old.todayNodeFxLineId != todayNodeFxLineId ||
+        old.todayNodeFxFromDayIndex != todayNodeFxFromDayIndex ||
+        old.todayNodeFxAppearing != todayNodeFxAppearing ||
         old.deletingLineId != deletingLineId ||
         old.deleteModeLineId != deleteModeLineId ||
         !identical(old.gapData, gapData) ||

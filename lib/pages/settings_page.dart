@@ -18,8 +18,7 @@ import 'home_page.dart';
 /// 提供:
 ///   • UID 显示 + 复制
 ///   • 备份 / 恢复（.trail 文件）
-///   • 节点间距滑块（48-80dp）
-///   • 卫星点旋转动画开关
+///   • 个性化入口
 ///   • 归档页入口
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -29,8 +28,9 @@ class SettingsPage extends StatefulWidget {
 }
 
 class _SettingsPageState extends State<SettingsPage> {
-  late bool _newFeaturesEnabled;
   late double _nodeSpacing;
+  late bool _constellationVisible;
+  late ConstellationHeightMode _constellationHeightMode;
   late bool _satelliteRotation;
   bool _backupBusy = false;
   bool _restoreBusy = false;
@@ -39,16 +39,48 @@ class _SettingsPageState extends State<SettingsPage> {
   @override
   void initState() {
     super.initState();
+    _reloadPersonalizationSummary();
+  }
+
+  void _reloadPersonalizationSummary() {
     final s = StorageService.instance;
-    _newFeaturesEnabled = s.newFeaturesEnabled;
     _nodeSpacing = s.nodeSpacing;
+    _constellationVisible = s.constellationVisible;
+    _constellationHeightMode = s.constellationHeightMode;
     _satelliteRotation = s.satelliteRotationEnabled;
+  }
+
+  String _constellationHeightLabel(ConstellationHeightMode mode) {
+    switch (mode) {
+      case ConstellationHeightMode.compact:
+        return '紧凑';
+      case ConstellationHeightMode.standard:
+        return '标准';
+      case ConstellationHeightMode.expansive:
+        return '开阔';
+    }
+  }
+
+  String get _personalizationSubtitle {
+    final constellationSummary = _constellationVisible
+        ? '星图${_constellationHeightLabel(_constellationHeightMode)}'
+        : '星图关闭';
+    final satelliteSummary = _satelliteRotation ? '卫星旋转开' : '卫星旋转关';
+    return '行间距 ${_nodeSpacing.round()} dp · $constellationSummary · $satelliteSummary';
+  }
+
+  Future<void> _openPersonalization() async {
+    HapticService.actionMenuSelect();
+    await Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => const PersonalizationPage()));
+    if (!mounted) return;
+    setState(_reloadPersonalizationSummary);
   }
 
   @override
   Widget build(BuildContext context) {
     final padding = MediaQuery.of(context).padding;
-    final disabled = !_newFeaturesEnabled;
     return Scaffold(
       backgroundColor: Colors.black,
       body: SafeArea(
@@ -62,7 +94,7 @@ class _SettingsPageState extends State<SettingsPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              _TopBar(onBack: () => Navigator.of(context).pop()),
+              _TopBar(title: '设置', onBack: () => Navigator.of(context).pop()),
               const SizedBox(height: 22),
               Expanded(
                 child: ListView(
@@ -100,49 +132,12 @@ class _SettingsPageState extends State<SettingsPage> {
                     ),
                     const SizedBox(height: 28),
 
-                    // ── 新功能 ──
-                    _sectionLabel('新功能'),
-                    _ToggleTile(
-                      title: '启用新功能',
-                      subtitle: '关闭后 → 还原原始纯点+连线时间轴',
-                      value: _newFeaturesEnabled,
-                      onChanged: (v) {
-                        setState(() => _newFeaturesEnabled = v);
-                        StorageService.instance.setNewFeaturesEnabled(v);
-                        HapticService.actionMenuSelect();
-                      },
-                    ),
-                    const SizedBox(height: 28),
-
-                    // ── 主时间轴 ──
-                    _sectionLabel('主时间轴', dim: disabled),
-                    _SpacingTile(
-                      value: _nodeSpacing,
-                      min: StorageService.minNodeSpacing,
-                      max: StorageService.maxNodeSpacing,
-                      enabled: _newFeaturesEnabled,
-                      onChanged: (v) {
-                        setState(() => _nodeSpacing = v);
-                      },
-                      onChangeEnd: (v) {
-                        StorageService.instance.setNodeSpacing(v);
-                        HapticService.actionMenuSelect();
-                      },
-                    ),
-                    const SizedBox(height: 28),
-
-                    // ── 节点备注 ──
-                    _sectionLabel('节点备注', dim: disabled),
-                    _ToggleTile(
-                      title: '卫星点旋转动画',
-                      subtitle: '关闭后 → 卫星点固定在环右侧',
-                      value: _satelliteRotation,
-                      enabled: _newFeaturesEnabled,
-                      onChanged: (v) {
-                        setState(() => _satelliteRotation = v);
-                        StorageService.instance.setSatelliteRotationEnabled(v);
-                        HapticService.actionMenuSelect();
-                      },
+                    // ── 个性化 ──
+                    _sectionLabel('个性化'),
+                    _NavTile(
+                      title: '时间轴与星图',
+                      subtitle: _personalizationSubtitle,
+                      onTap: _openPersonalization,
                     ),
                     const SizedBox(height: 28),
 
@@ -459,13 +454,194 @@ class _SettingsPageState extends State<SettingsPage> {
   );
 }
 
+class PersonalizationPage extends StatefulWidget {
+  const PersonalizationPage({super.key});
+
+  @override
+  State<PersonalizationPage> createState() => _PersonalizationPageState();
+}
+
+class _PersonalizationPageState extends State<PersonalizationPage> {
+  late double _nodeSpacing;
+  late bool _constellationVisible;
+  late ConstellationHeightMode _constellationHeightMode;
+  late bool _satelliteRotation;
+
+  @override
+  void initState() {
+    super.initState();
+    final s = StorageService.instance;
+    _nodeSpacing = s.nodeSpacing;
+    _constellationVisible = s.constellationVisible;
+    _constellationHeightMode = s.constellationHeightMode;
+    _satelliteRotation = s.satelliteRotationEnabled;
+  }
+
+  String _constellationHeightSubtitle(ConstellationHeightMode mode) {
+    switch (mode) {
+      case ConstellationHeightMode.compact:
+        return '只保留一条更克制的顶部星带';
+      case ConstellationHeightMode.standard:
+        return '保持当前推荐的呼吸空间';
+      case ConstellationHeightMode.expansive:
+        return '让顶部星图占据更完整的抬头区域';
+    }
+  }
+
+  Widget _sectionLabel(String text, {bool dim = false}) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 2, bottom: 10, top: 4),
+      child: Text(
+        text,
+        style: TextStyle(
+          color: Color.fromRGBO(255, 255, 255, dim ? 0.22 : 0.42),
+          fontSize: 11,
+          fontWeight: FontWeight.w400,
+          letterSpacing: 2,
+          decoration: TextDecoration.none,
+        ),
+      ),
+    );
+  }
+
+  Widget _footerText() => const Center(
+    child: Text(
+      '个性化',
+      style: TextStyle(
+        color: Color(0x33FFFFFF),
+        fontSize: 10,
+        fontWeight: FontWeight.w300,
+        letterSpacing: 4,
+        decoration: TextDecoration.none,
+      ),
+    ),
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    final padding = MediaQuery.of(context).padding;
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: SafeArea(
+        child: Padding(
+          padding: EdgeInsets.only(
+            left: 24,
+            right: 24,
+            top: 8,
+            bottom: padding.bottom + 20,
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _TopBar(title: '个性化', onBack: () => Navigator.of(context).pop()),
+              const SizedBox(height: 22),
+              Expanded(
+                child: ListView(
+                  physics: const BouncingScrollPhysics(),
+                  padding: EdgeInsets.zero,
+                  children: [
+                    _sectionLabel('主时间轴'),
+                    _SpacingTile(
+                      value: _nodeSpacing,
+                      min: StorageService.minNodeSpacing,
+                      max: StorageService.maxNodeSpacing,
+                      enabled: true,
+                      onChanged: (v) {
+                        setState(() => _nodeSpacing = v);
+                      },
+                      onChangeEnd: (v) {
+                        StorageService.instance.setNodeSpacing(v);
+                        HapticService.actionMenuSelect();
+                      },
+                    ),
+                    const SizedBox(height: 28),
+                    _sectionLabel('顶部星图'),
+                    _ToggleTile(
+                      title: '显示头上的星图',
+                      subtitle: '关闭后，顶部回到纯黑背景',
+                      value: _constellationVisible,
+                      onChanged: (v) {
+                        setState(() => _constellationVisible = v);
+                        StorageService.instance.setConstellationVisible(v);
+                        HapticService.actionMenuSelect();
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    _ChoiceTile<ConstellationHeightMode>(
+                      title: '星图高度',
+                      subtitle: _constellationVisible
+                          ? _constellationHeightSubtitle(
+                              _constellationHeightMode,
+                            )
+                          : '先打开顶部星图，才需要调整占据高度',
+                      value: _constellationHeightMode,
+                      enabled: _constellationVisible,
+                      options: const [
+                        _ChoiceOption(
+                          value: ConstellationHeightMode.compact,
+                          label: '紧凑',
+                        ),
+                        _ChoiceOption(
+                          value: ConstellationHeightMode.standard,
+                          label: '标准',
+                        ),
+                        _ChoiceOption(
+                          value: ConstellationHeightMode.expansive,
+                          label: '开阔',
+                        ),
+                      ],
+                      onChanged: (mode) {
+                        setState(() => _constellationHeightMode = mode);
+                        StorageService.instance.setConstellationHeightMode(
+                          mode,
+                        );
+                        HapticService.actionMenuSelect();
+                      },
+                    ),
+                    const SizedBox(height: 28),
+                    _sectionLabel('节点备注'),
+                    _ToggleTile(
+                      title: '卫星点旋转动画',
+                      subtitle: '关闭后，备注图标固定在环右侧',
+                      value: _satelliteRotation,
+                      onChanged: (v) {
+                        setState(() => _satelliteRotation = v);
+                        StorageService.instance.setSatelliteRotationEnabled(v);
+                        HapticService.actionMenuSelect();
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      '注：本次例外仅针对 icon 级卫星点动画，不扩展为常驻系统背景动画。',
+                      style: const TextStyle(
+                        color: Color(0x55FFFFFF),
+                        fontSize: 11,
+                        fontWeight: FontWeight.w300,
+                        height: 1.45,
+                        decoration: TextDecoration.none,
+                      ),
+                    ),
+                    const SizedBox(height: 40),
+                    _footerText(),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 // ─────────────────────────────────────────────────────
 // 顶栏：返回 + 标题
 // ─────────────────────────────────────────────────────
 
 class _TopBar extends StatelessWidget {
+  final String title;
   final VoidCallback onBack;
-  const _TopBar({required this.onBack});
+  const _TopBar({required this.title, required this.onBack});
 
   @override
   Widget build(BuildContext context) {
@@ -480,9 +656,9 @@ class _TopBar extends StatelessWidget {
           ),
         ),
         const SizedBox(width: 6),
-        const Text(
-          '设置',
-          style: TextStyle(
+        Text(
+          title,
+          style: const TextStyle(
             color: Color(0xEEFFFFFF),
             fontSize: 17,
             fontWeight: FontWeight.w500,
@@ -747,7 +923,6 @@ class _ToggleTile extends StatelessWidget {
   final String title;
   final String subtitle;
   final bool value;
-  final bool enabled;
   final ValueChanged<bool> onChanged;
 
   const _ToggleTile({
@@ -755,56 +930,48 @@ class _ToggleTile extends StatelessWidget {
     required this.subtitle,
     required this.value,
     required this.onChanged,
-    this.enabled = true,
   });
 
   @override
   Widget build(BuildContext context) {
-    final textColor = enabled ? Colors.white : const Color(0x55FFFFFF);
-    final subColor = enabled
-        ? const Color(0x77FFFFFF)
-        : const Color(0x33FFFFFF);
-    return Opacity(
-      opacity: enabled ? 1.0 : 0.6,
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: enabled ? () => onChanged(!value) : null,
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 2),
-          child: Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: TextStyle(
-                        color: textColor,
-                        fontSize: 15,
-                        fontWeight: FontWeight.w400,
-                        letterSpacing: 1,
-                        decoration: TextDecoration.none,
-                      ),
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () => onChanged(!value),
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 2),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w400,
+                      letterSpacing: 1,
+                      decoration: TextDecoration.none,
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      subtitle,
-                      style: TextStyle(
-                        color: subColor,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w300,
-                        letterSpacing: 0.8,
-                        decoration: TextDecoration.none,
-                      ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    subtitle,
+                    style: const TextStyle(
+                      color: Color(0x77FFFFFF),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w300,
+                      letterSpacing: 0.8,
+                      decoration: TextDecoration.none,
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
-              const SizedBox(width: 16),
-              _SoftSwitch(value: value, enabled: enabled),
-            ],
-          ),
+            ),
+            const SizedBox(width: 16),
+            _SoftSwitch(value: value),
+          ],
         ),
       ),
     );
@@ -813,14 +980,13 @@ class _ToggleTile extends StatelessWidget {
 
 class _SoftSwitch extends StatelessWidget {
   final bool value;
-  final bool enabled;
-  const _SoftSwitch({required this.value, this.enabled = true});
+  const _SoftSwitch({required this.value});
 
   @override
   Widget build(BuildContext context) {
     final trackColor = value
-        ? (enabled ? const Color(0xAAFFFFFF) : const Color(0x55FFFFFF))
-        : (enabled ? const Color(0x22FFFFFF) : const Color(0x11FFFFFF));
+        ? const Color(0xAAFFFFFF)
+        : const Color(0x22FFFFFF);
     return AnimatedContainer(
       duration: const Duration(milliseconds: 220),
       curve: Curves.easeOutCubic,
@@ -949,6 +1115,133 @@ class _SpacingTile extends StatelessWidget {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ChoiceOption<T> {
+  final T value;
+  final String label;
+
+  const _ChoiceOption({required this.value, required this.label});
+}
+
+class _ChoiceTile<T> extends StatelessWidget {
+  final String title;
+  final String subtitle;
+  final T value;
+  final bool enabled;
+  final List<_ChoiceOption<T>> options;
+  final ValueChanged<T> onChanged;
+
+  const _ChoiceTile({
+    required this.title,
+    required this.subtitle,
+    required this.value,
+    required this.options,
+    required this.onChanged,
+    this.enabled = true,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final textColor = enabled ? Colors.white : const Color(0x55FFFFFF);
+    final subColor = enabled
+        ? const Color(0x77FFFFFF)
+        : const Color(0x33FFFFFF);
+    return Opacity(
+      opacity: enabled ? 1.0 : 0.6,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 2),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              title,
+              style: TextStyle(
+                color: textColor,
+                fontSize: 15,
+                fontWeight: FontWeight.w400,
+                letterSpacing: 1,
+                decoration: TextDecoration.none,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              subtitle,
+              style: TextStyle(
+                color: subColor,
+                fontSize: 12,
+                fontWeight: FontWeight.w300,
+                letterSpacing: 0.8,
+                height: 1.35,
+                decoration: TextDecoration.none,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              children: [
+                for (final option in options)
+                  _ChoiceChip(
+                    label: option.label,
+                    selected: value == option.value,
+                    enabled: enabled,
+                    onTap: () => onChanged(option.value),
+                  ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ChoiceChip extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final bool enabled;
+  final VoidCallback onTap;
+
+  const _ChoiceChip({
+    required this.label,
+    required this.selected,
+    required this.enabled,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final fg = selected ? Colors.black : Colors.white;
+    final bg = selected ? const Color(0xE6FFFFFF) : const Color(0x12FFFFFF);
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: enabled ? onTap : null,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        curve: Curves.easeOutCubic,
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+        decoration: BoxDecoration(
+          color: bg,
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(
+            color: selected ? const Color(0x55FFFFFF) : const Color(0x22FFFFFF),
+            width: 0.8,
+          ),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: enabled ? fg : const Color(0x55FFFFFF),
+            fontSize: 12,
+            fontWeight: selected ? FontWeight.w500 : FontWeight.w300,
+            letterSpacing: 0.8,
+            decoration: TextDecoration.none,
+          ),
         ),
       ),
     );

@@ -55,6 +55,34 @@ extension HeaderLayoutModeX on HeaderLayoutMode {
   }
 }
 
+/// 顶部星图高度档位
+enum ConstellationHeightMode { compact, standard, expansive }
+
+extension ConstellationHeightModeX on ConstellationHeightMode {
+  int get storageValue {
+    switch (this) {
+      case ConstellationHeightMode.compact:
+        return 0;
+      case ConstellationHeightMode.standard:
+        return 1;
+      case ConstellationHeightMode.expansive:
+        return 2;
+    }
+  }
+
+  static ConstellationHeightMode fromStorage(int? v) {
+    switch (v) {
+      case 0:
+        return ConstellationHeightMode.compact;
+      case 2:
+        return ConstellationHeightMode.expansive;
+      case 1:
+      default:
+        return ConstellationHeightMode.standard;
+    }
+  }
+}
+
 /// 本地存储服务 — Hive 纯本地，零网络
 class StorageService {
   static StorageService? _instance;
@@ -79,6 +107,10 @@ class StorageService {
   static const String _prefNewFeaturesKey = 'pref_new_features_enabled';
   static const String _prefNodeSpacingKey = 'pref_node_spacing';
   static const String _prefSatelliteRotationKey = 'pref_satellite_rotation';
+  static const String _prefConstellationVisibleKey =
+      'pref_constellation_visible';
+  static const String _prefConstellationHeightKey =
+      'pref_constellation_height_mode';
   static const String _prefLineOrderKey = 'pref_line_order'; // 自定义行动线的手动排序
 
   // 默认值
@@ -475,6 +507,20 @@ class StorageService {
 
   Future<void> setSatelliteRotationEnabled(bool v) =>
       _dataBox.put(_prefSatelliteRotationKey, v);
+
+  bool get constellationVisible =>
+      _dataBox.get(_prefConstellationVisibleKey, defaultValue: true) as bool;
+
+  Future<void> setConstellationVisible(bool v) =>
+      _dataBox.put(_prefConstellationVisibleKey, v);
+
+  ConstellationHeightMode get constellationHeightMode {
+    final raw = _dataBox.get(_prefConstellationHeightKey);
+    return ConstellationHeightModeX.fromStorage(raw is int ? raw : null);
+  }
+
+  Future<void> setConstellationHeightMode(ConstellationHeightMode mode) =>
+      _dataBox.put(_prefConstellationHeightKey, mode.storageValue);
 
   /// 危险操作：清除所有本地业务数据，并删除对应的 Hive 物理文件。
   ///

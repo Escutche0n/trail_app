@@ -1,7 +1,7 @@
 name: trail_app
 description: "迹点（Trail）— 极简人生轨迹记录"
 publish_to: 'none'
-version: 1.0.1+1
+version: 1.0.2+5
 
 environment:
   sdk: ^3.11.4
