@@ -28,8 +28,13 @@
 - 将 `README.md` 中“当前主线版本”从 `1.0.1+1` 对齐更新为 `1.0.2+5`。
 - 运行完整静态检查：`flutter analyze` ✅
 - 本地构建 Android release APK：`flutter build apk --release` ✅
-- 产物位置：`build/app/outputs/flutter-apk/app-release.apk`
-- 计划使用 `scripts/release_android_canary.sh` 触发 GitHub Actions canary 流程，生成带 tag 的 Android 预发布 APK。
+- 提交整合 commit：`1b86e91` `Ship 1.0.2 constellation and personalization batch`
+- 已推送 `main` 到 `origin/main` ✅
+- 使用 `scripts/release_android_canary.sh release-1-0-2` 触发 GitHub Actions canary 流程 ✅
+- 生成 canary tag：`android-canary-v1.0.2-build.5-release-1-0-2-202604191454`
+- 本地 APK 产物：
+  - `build/app/outputs/flutter-apk/app-release.apk`
+  - `build/app/outputs/flutter-apk/trail_app-v1.0.2+5-canary-local.apk`
 
 ## Decisions made
 
@@ -39,12 +44,12 @@
 
 ## In flight / blocked
 
-- GitHub canary APK 依赖远端 push 与 tag push 成功，以及 GitHub Actions 完成构建。
-- 若网络/权限受限，推送与 tag 触发可能需要额外授权。
+- GitHub canary APK 还需等待 GitHub Actions 完成构建并发布到对应 pre-release。
+- 本地 push 时遇到沙箱网络限制，已通过授权完成；当前工作树已回到干净状态。
 
 ## Handoff
 
-- 若本次 push 和 canary tag 都成功，下一步只需在 GitHub Actions / GitHub Release 页面确认对应 tag 的预发布 APK 已生成并可下载。
+- 下一步只需在 GitHub Actions / GitHub Release 页面确认 tag `android-canary-v1.0.2-build.5-release-1-0-2-202604191454` 的预发布 APK 已生成并可下载。
 - 若 canary workflow 失败，优先检查 `flutter analyze`、Android 构建环境、release notes 步骤与 GitHub 发布权限。
 
 ## Questions for Elvis
